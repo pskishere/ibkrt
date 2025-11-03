@@ -517,7 +517,7 @@ class TradingCLI:
                     status = "🔴 超买(可能回调)"
                 else:
                     status = "⚪ 中性"
-                print(f"\n📊 RSI(14日): {rsi:.1f} {status} [需14天数据]")
+                print(f"📊 RSI(14日): {rsi:.1f} {status} [需14天数据]")
             
             # 布林带
             if all(k in indicators for k in ['bb_upper', 'bb_middle', 'bb_lower']):
@@ -531,7 +531,7 @@ class TradingCLI:
                 elif current <= lower * 1.01:
                     position = " 📍接近下轨(可能反弹)"
                 
-                print(f"\n📏 布林带(20日):{position} [需20天数据]")
+                print(f"📏 布林带(20日):{position} [需20天数据]")
                 print(f"   上轨: ${upper:.2f} | 中轨: ${middle:.2f} | 下轨: ${lower:.2f}")
             
             # MACD
@@ -545,7 +545,7 @@ class TradingCLI:
                 else:
                     trend = "死叉(看跌)"
                 
-                print(f"\n📈 MACD: {macd_val:.3f} | 信号: {signal:.3f} | {trend} [需26天数据]")
+                print(f"📈 MACD: {macd_val:.3f} | 信号: {signal:.3f} | {trend} [需26天数据]")
             
             # 成交量
             if 'volume_ratio' in indicators:
@@ -556,7 +556,7 @@ class TradingCLI:
                     desc = "缩量"
                 else:
                     desc = "正常"
-                print(f"\n📊 成交量: {ratio:.2f}x ({desc})")
+                print(f"📊 成交量: {ratio:.2f}x ({desc})")
             
             # 波动率和ATR
             if 'volatility_20' in indicators or 'atr' in indicators:
@@ -579,7 +579,7 @@ class TradingCLI:
                     parts.append(f"ATR: ${atr:.2f}({atr_pct:.1f}%)")
                 
                 if parts:
-                    print(f"\n⚡ {' | '.join(parts)}")
+                    print(f"⚡ {' | '.join(parts)}")
             
             # KDJ指标
             if all(k in indicators for k in ['kdj_k', 'kdj_d', 'kdj_j']):
@@ -595,7 +595,7 @@ class TradingCLI:
                     status = "⚪中性"
                 
                 trend = "多头" if k > d else "空头"
-                print(f"\n📊 KDJ(9日): K={k:.1f} D={d:.1f} J={j:.1f} | {status} {trend} [需9天数据]")
+                print(f"📊 KDJ(9日): K={k:.1f} D={d:.1f} J={j:.1f} | {status} {trend} [需9天数据]")
             
             # 威廉指标
             if 'williams_r' in indicators:
@@ -606,7 +606,7 @@ class TradingCLI:
                     wr_status = "🔴超买"
                 else:
                     wr_status = "⚪中性"
-                print(f"\n📉 威廉%R: {wr:.1f} {wr_status}")
+                print(f"📉 威廉%R: {wr:.1f} {wr_status}")
             
             # OBV趋势
             if 'obv_trend' in indicators:
@@ -626,7 +626,7 @@ class TradingCLI:
                 else:
                     obv_desc = "平稳"
                 
-                print(f"\n📊 OBV: {obv_desc}")
+                print(f"📊 OBV: {obv_desc}")
             
             # 趋势强度
             if 'trend_strength' in indicators:
@@ -647,7 +647,7 @@ class TradingCLI:
                 else:
                     strength_desc = "弱"
                 
-                print(f"\n🎯 趋势: {dir_icon} | 强度: {strength:.0f}%({strength_desc})")
+                print(f"🎯 趋势: {dir_icon} | 强度: {strength:.0f}%({strength_desc})")
             
             # 连续涨跌
             if 'consecutive_up_days' in indicators or 'consecutive_down_days' in indicators:
@@ -656,13 +656,13 @@ class TradingCLI:
                 
                 if up > 0:
                     warning = " ⚠️" if up >= 5 else ""
-                    print(f"\n📈 连续{up}天上涨{warning}")
+                    print(f"📈 连续{up}天上涨{warning}")
                 elif down > 0:
                     warning = " 🟢" if down >= 5 else ""
-                    print(f"\n📉 连续{down}天下跌{warning}")
+                    print(f"📉 连续{down}天下跌{warning}")
             
             # 支撑位和压力位
-            print(f"\n🎯 关键价位:")
+            print(f"🎯 关键价位:")
             
             # Pivot Points
             if 'pivot' in indicators:
@@ -683,14 +683,14 @@ class TradingCLI:
             
             # 买卖信号
             if signals:
-                print(f"\n" + "=" * 70)
+                print("=" * 70)
                 print(f"💡 交易信号:")
                 print(f"=" * 70)
                 
                 for signal in signals.get('signals', []):
                     print(f"  {signal}")
                 
-                print(f"\n" + "=" * 70)
+                print("=" * 70)
                 score = signals.get('score', 0)
                 recommendation = signals.get('recommendation', '未知')
                 print(f"📋 综合评分: {score:+d}/100")
