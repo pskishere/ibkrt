@@ -1406,6 +1406,12 @@ class IBGateway(EWrapper, EClient):
         
         # 风险评估
         risk_assessment = self._assess_risk(indicators)
+        signals['risk'] = {
+            'level': risk_assessment['level'],
+            'score': risk_assessment['score'],
+            'factors': risk_assessment['factors']
+        }
+        # 保留顶级字段以兼容旧代码
         signals['risk_level'] = risk_assessment['level']
         signals['risk_score'] = risk_assessment['score']
         signals['risk_factors'] = risk_assessment['factors']
@@ -1495,17 +1501,17 @@ class IBGateway(EWrapper, EClient):
                 risk_score += 15
                 risk_factors.append('量价背离')
         
-        # 判断风险等级
+        # 判断风险等级（返回英文标识符，前端负责显示）
         if risk_score >= 70:
-            level = '🔴 极高风险'
+            level = 'very_high'
         elif risk_score >= 50:
-            level = '🟠 高风险'
+            level = 'high'
         elif risk_score >= 30:
-            level = '🟡 中等风险'
+            level = 'medium'
         elif risk_score >= 15:
-            level = '🟢 低风险'
+            level = 'low'
         else:
-            level = '✅ 很低风险'
+            level = 'very_low'
         
         return {
             'level': level,
@@ -2014,6 +2020,133 @@ def analyze_stock(symbol):
     })
 
 
+@app.route('/api/ai-analyze/<symbol>', methods=['GET'])
+def ai_analyze_stock(symbol):
+    """
+    AI技术分析 - 使用Ollama分析技术指标并给出专业建议
+    查询参数:
+    - duration: 数据周期 (默认: '3 M')
+    - bar_size: K线周期 (默认: '1 day')
+    - model: Ollama模型 (默认: 'deepseek-v3.1:671b-cloud')
+    """
+    if not gateway or not gateway.connected:
+        return jsonify({
+            'success': False,
+            'message': '未连接到网关'
+        }), 400
+    
+    duration = request.args.get('duration', '3 M')
+    bar_size = request.args.get('bar_size', '1 day')
+    model = request.args.get('model', 'deepseek-v3.1:671b-cloud')
+    
+    logger.info(f"AI分析: {symbol}, {duration}, {bar_size}, model={model}")
+    
+    # 计算技术指标
+    indicators = gateway.calculate_technical_indicators(symbol.upper(), duration, bar_size)
+    
+    if not indicators:
+        return jsonify({
+            'success': False,
+            'message': '数据不足，无法计算技术指标'
+        }), 404
+    
+    # 生成买卖信号
+    signals = gateway.generate_signals(indicators)
+    
+    # 使用AI分析
+    try:
+        import ollama
+        
+        # 构建提示词
+        prompt = f"""你是一位专业的股票技术分析师。请基于以下技术指标数据，给出详细的交易分析和建议。
+
+股票代码: {symbol.upper()}
+当前价格: ${indicators.get('current_price', 0):.2f}
+数据周期: {duration} ({indicators.get('data_points', 0)}个数据点)
+
+技术指标:
+1. 移动平均线:
+   - MA5: ${indicators.get('ma5', 0):.2f}
+   - MA20: ${indicators.get('ma20', 0):.2f}
+   - MA50: ${indicators.get('ma50', 0):.2f}
+
+2. 动量指标:
+   - RSI(14): {indicators.get('rsi', 0):.1f}
+   - MACD: {indicators.get('macd', 0):.3f}
+   - 信号线: {indicators.get('macd_signal', 0):.3f}
+
+3. 波动指标:
+   - 布林带上轨: ${indicators.get('bb_upper', 0):.2f}
+   - 布林带中轨: ${indicators.get('bb_middle', 0):.2f}
+   - 布林带下轨: ${indicators.get('bb_lower', 0):.2f}
+   - ATR: ${indicators.get('atr', 0):.2f}
+
+4. KDJ指标:
+   - K: {indicators.get('kdj_k', 0):.1f}
+   - D: {indicators.get('kdj_d', 0):.1f}
+   - J: {indicators.get('kdj_j', 0):.1f}
+
+5. 趋势分析:
+   - 趋势方向: {indicators.get('trend_direction', 'neutral')}
+   - 趋势强度: {indicators.get('trend_strength', 0):.0f}%
+   - 连续上涨天数: {indicators.get('consecutive_up_days', 0)}
+   - 连续下跌天数: {indicators.get('consecutive_down_days', 0)}
+
+6. 支撑压力位:
+   - 枢轴点: ${indicators.get('pivot', 0):.2f}
+   - 压力位R1: ${indicators.get('pivot_r1', 0):.2f}
+   - 支撑位S1: ${indicators.get('pivot_s1', 0):.2f}
+
+7. 风险评估:
+   - 风险等级: {signals.get('risk', {}).get('level', 'unknown')}
+   - 风险评分: {signals.get('risk', {}).get('score', 0)}/100
+
+8. 系统建议:
+   - 综合评分: {signals.get('score', 0)}/100
+   - 建议操作: {signals.get('recommendation', 'unknown')}
+
+请提供:
+1. 当前市场状态分析（趋势、动能、波动）
+2. 关键技术信号解读
+3. 买入/卖出/观望的具体建议
+4. 风险提示和注意事项
+5. 建议的止损止盈位
+
+请用中文回答，简洁专业，重点突出。"""
+
+        # 调用Ollama
+        response = ollama.chat(
+            model=model,
+            messages=[{
+                'role': 'user',
+                'content': prompt
+            }]
+        )
+        
+        ai_analysis = response['message']['content']
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol.upper(),
+            'indicators': indicators,
+            'signals': signals,
+            'ai_analysis': ai_analysis,
+            'model': model
+        })
+        
+    except Exception as ai_error:
+        logger.error(f"AI分析失败: {ai_error}")
+        # AI失败时仍返回技术指标
+        return jsonify({
+            'success': True,
+            'symbol': symbol.upper(),
+            'indicators': indicators,
+            'signals': signals,
+            'ai_analysis': f'AI分析不可用: {str(ai_error)}\n\n请确保Ollama已安装并运行: ollama serve',
+            'model': model
+        })
+
+
 @app.route('/', methods=['GET'])
 def index():
     """
@@ -2037,7 +2170,8 @@ def index():
             'history': 'GET /api/history/<symbol>',
             'stock_info': 'GET /api/info/<symbol>',
             'fundamental': 'GET /api/fundamental/<symbol>',
-            'analyze': 'GET /api/analyze/<symbol>'
+            'analyze': 'GET /api/analyze/<symbol>',
+            'ai_analyze': 'GET /api/ai-analyze/<symbol>'
         }
     })
 

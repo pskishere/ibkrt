@@ -1,5 +1,5 @@
 # Interactive Brokers API
-ibapi==10.19.2
+ibapi==9.81.1.post1
 
 # Web Framework
 Flask==3.0.0
@@ -9,13 +9,16 @@ Flask-CORS==4.0.0
 requests==2.31.0
 
 # Data Analysis
-numpy==1.24.3
+numpy>=1.24.3,<2.0.0
 
 # Date and Time
 python-dateutil==2.8.2
 
 # Terminal Plotting
 plotext==5.2.8
+
+# AI Analysis
+ollama==0.3.3
 
 # Utilities
 Werkzeug==3.0.1

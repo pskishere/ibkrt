@@ -25,14 +25,15 @@ class TradingCLI:
         self.base_url = base_url
         self.connected = False
         
-    def _request(self, method: str, endpoint: str, data: Optional[dict] = None):
+    def _request(self, method: str, endpoint: str, data: Optional[dict] = None, timeout: int = None):
         """
         发送HTTP请求
         """
         url = f"{self.base_url}{endpoint}"
         try:
             # 根据请求类型设置不同的超时时间
-            timeout = 30 if 'history' in endpoint or 'quote' in endpoint else 10
+            if timeout is None:
+                timeout = 30 if 'history' in endpoint or 'quote' in endpoint else 10
             
             if method == 'GET':
                 response = requests.get(url, timeout=timeout)
@@ -349,9 +350,88 @@ class TradingCLI:
             msg = result.get('message', '未知错误') if result else '查询失败'
             print(f"❌ {msg}")
     
-    def analyze(self, symbol: str, duration: str = '1 M', bar_size: str = '1 day'):
+    def ai_analyze(self, symbol: str, duration: str = '3 M', bar_size: str = '1 day', model: str = 'deepseek-v3.1:671b-cloud'):
         """
-        技术分析 - 生成买卖信号
+        AI技术分析 - 使用Ollama AI分析技术指标
+        """
+        print(f"🤖 AI分析 {symbol.upper()}...")
+        print(f"使用模型: {model}")
+        print(f"请稍候，AI正在分析中...")
+        
+        # 标准化参数
+        import re
+        duration = re.sub(r'(\d+)([SDWMY])', r'\1 \2', duration, flags=re.IGNORECASE)
+        bar_size = bar_size.replace('min', ' min').replace('hour', ' hour').replace('day', ' day')
+        bar_size = re.sub(r'\s+', ' ', bar_size).strip()
+        if 'min' in bar_size and not bar_size.endswith('mins'):
+            bar_size = bar_size.replace('min', 'mins')
+        
+        import urllib.parse
+        params = f"?duration={urllib.parse.quote(duration)}&bar_size={urllib.parse.quote(bar_size)}&model={urllib.parse.quote(model)}"
+        result = self._request('GET', f'/api/ai-analyze/{symbol.upper()}{params}', timeout=60)  # AI分析需要更长时间
+        
+        if result and result.get('success'):
+            ai_analysis = result.get('ai_analysis', '')
+            
+            print(f"\n{'='*70}")
+            print(f"🤖 {symbol.upper()} AI技术分析报告")
+            print(f"{'='*70}")
+            print(f"模型: {result.get('model', 'unknown')}")
+            print(f"{'='*70}\n")
+            
+            # 显示AI分析
+            print(ai_analysis)
+            print(f"\n{'='*70}")
+            
+            # 显示技术指标摘要
+            indicators = result.get('indicators', {})
+            signals = result.get('signals', {})
+            
+            if indicators:
+                print(f"\n📊 技术指标摘要:")
+                print(f"   当前价: ${indicators.get('current_price', 0):.2f}")
+                print(f"   RSI: {indicators.get('rsi', 0):.1f}")
+                print(f"   MACD: {indicators.get('macd', 0):.3f}")
+                print(f"   趋势: {indicators.get('trend_direction', 'unknown')}")
+                
+            if signals:
+                score = signals.get('score', 0)
+                recommendation = signals.get('recommendation', 'unknown')
+                
+                # 获取风险信息
+                risk_data = signals.get('risk', {})
+                if isinstance(risk_data, dict):
+                    risk_level = risk_data.get('level', 'unknown')
+                    risk_score = risk_data.get('score', 0)
+                else:
+                    risk_level = 'unknown'
+                    risk_score = 0
+                
+                # 风险等级中文映射
+                risk_map = {
+                    'very_low': '✅ 很低风险',
+                    'low': '🟢 低风险',
+                    'medium': '🟡 中等风险',
+                    'high': '🔴 高风险',
+                    'very_high': '🔴 极高风险',
+                    'unknown': '⚪ 未知'
+                }
+                risk_display = risk_map.get(risk_level, f'⚪ {risk_level}')
+                
+                print(f"\n💡 系统评分:")
+                print(f"   综合评分: {score}/100")
+                print(f"   建议操作: {recommendation}")
+                print(f"   风险等级: {risk_display}")
+                if risk_score > 0:
+                    print(f"   风险评分: {risk_score}/100")
+                
+        else:
+            msg = result.get('message', '未知错误') if result else '分析失败'
+            print(f"❌ {msg}")
+    
+    def analyze(self, symbol: str, duration: str = '3 M', bar_size: str = '1 day'):
+        """
+        技术分析 - 生成买卖信号（默认3个月日K线）
         """
         print(f"分析 {symbol.upper()}...")
         
@@ -396,11 +476,11 @@ class TradingCLI:
             # 数据不足时给出建议
             if data_points < 50:
                 if data_points < 20:
-                    print(f"💡 建议: an {symbol.upper()} \"1 M\" \"1 day\" (获取更多数据)")
+                    print(f"💡 建议: an {symbol.upper()} 2M (获取更多数据)")
                 elif data_points < 26:
-                    print(f"💡 建议: an {symbol.upper()} \"2 M\" \"1 day\" (获取MACD数据)")
+                    print(f"💡 建议: an {symbol.upper()} 3M (获取MACD数据)")
                 else:
-                    print(f"💡 建议: an {symbol.upper()} \"3 M\" \"1 day\" (获取MA50数据)")
+                    print(f"💡 建议: an {symbol.upper()} 6M (获取MA50数据)")
             
             # 移动平均线
             if any(k in indicators for k in ['ma5', 'ma10', 'ma20', 'ma50']):
@@ -613,12 +693,31 @@ class TradingCLI:
                 print(f"💼 交易建议: {recommendation}")
                 
                 # 风险评估
-                if 'risk_level' in signals:
-                    risk_level = signals['risk_level']
+                risk_data = signals.get('risk', {})
+                if isinstance(risk_data, dict):
+                    risk_level = risk_data.get('level', 'unknown')
+                    risk_score = risk_data.get('score', 0)
+                    risk_factors = risk_data.get('factors', [])
+                else:
+                    # 兼容旧格式
+                    risk_level = signals.get('risk_level', 'unknown')
                     risk_score = signals.get('risk_score', 0)
-                    print(f"⚠️  风险等级: {risk_level} (风险分: {risk_score})")
-                    
                     risk_factors = signals.get('risk_factors', [])
+                
+                # 风险等级中文映射
+                risk_map = {
+                    'very_low': '✅ 很低风险',
+                    'low': '🟢 低风险',
+                    'medium': '🟡 中等风险',
+                    'high': '🔴 高风险',
+                    'very_high': '🔴 极高风险',
+                    'unknown': '⚪ 未知'
+                }
+                risk_display = risk_map.get(risk_level, f'⚪ {risk_level}')
+                
+                if risk_level != 'unknown':
+                    print(f"⚠️  风险等级: {risk_display} (风险分: {risk_score}/100)")
+                    
                     if risk_factors:
                         print(f"   风险因素: {', '.join(risk_factors)}")
                 
@@ -835,7 +934,7 @@ class TradingCLI:
 🔍 查询:
   a              账户        p              持仓
   o              订单        q  AAPL        报价
-  i  AAPL        详情        an AAPL        技术分析⭐
+  i  AAPL        详情        an AAPL        技术分析
 
 📊 交易:
   b AAPL 10      市价买      b AAPL 10 175  限价买
@@ -843,8 +942,13 @@ class TradingCLI:
   x 123          撤单
 
 📈 数据:
-  hi AAPL        历史数据    k  AAPL        K线图⭐
+  hi AAPL        历史数据    k  AAPL        K线图
   k  AAPL 1M     月K线图     k  AAPL 3M v   带成交量
+
+🤖 AI分析:
+  ai AAPL        AI技术分析⭐  (需要Ollama)
+  ai AAPL 3M     自定义周期
+  ai AAPL 3M 1day deepseek-v3.1:671b-cloud  指定模型
 
 ⚙️  系统:
   c              连接        d              断开
@@ -852,9 +956,10 @@ class TradingCLI:
   ?              帮助        exit           退出
 
 💡 提示:
+  • AI分析需要先安装Ollama: brew install ollama
+  • 启动Ollama服务: ollama serve
+  • 拉取模型: ollama pull deepseek-v3.1:671b-cloud
   • K线图支持任意周期: k AAPL 1W/1M/3M/1Y
-  • 添加 v 显示成交量: k AAPL 1M v
-  • 参数带空格用引号: k AAPL "1 M" "1 day"
         """)
         print("=" * 70 + "\n")
 
@@ -926,12 +1031,22 @@ def main():
                 else:
                     cli.info(args[0])
                     
+            elif cmd in ['ai', 'ai-analyze']:
+                if len(args) < 1:
+                    print("❌ 用法: ai <symbol> [duration] [bar_size] [model]")
+                else:
+                    symbol = args[0]
+                    duration = args[1] if len(args) > 1 else '3 M'
+                    bar_size = args[2] if len(args) > 2 else '1 day'
+                    model = args[3] if len(args) > 3 else 'deepseek-v3.1:671b-cloud'
+                    cli.ai_analyze(symbol, duration, bar_size, model)
+            
             elif cmd in ['analyze', 'an']:
                 if len(args) < 1:
                     print("❌ 用法: an <symbol> [duration] [bar_size]")
                 else:
                     symbol = args[0]
-                    duration = args[1] if len(args) > 1 else '1 M'
+                    duration = args[1] if len(args) > 1 else '3 M'
                     bar_size = args[2] if len(args) > 2 else '1 day'
                     cli.analyze(symbol, duration, bar_size)
                     
