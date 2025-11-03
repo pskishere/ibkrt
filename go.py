@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
@@ -2114,8 +2115,12 @@ def ai_analyze_stock(symbol):
 
 请用中文回答，简洁专业，重点突出。"""
 
-        # 调用Ollama
-        response = ollama.chat(
+        # 调用Ollama（固定使用本机服务）
+        try:
+            client = ollama.Client(host='http://localhost:11434')
+        except Exception:
+            client = None
+        response = (client.chat if client else ollama.chat)(
             model=model,
             messages=[{
                 'role': 'user',

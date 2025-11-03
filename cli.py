@@ -10,7 +10,11 @@ import requests
 import json
 import shlex
 from typing import Optional
-import readline  # 启用命令行历史和编辑
+# 尝试启用命令行历史和编辑（macOS/Linux 可用）
+try:
+    import readline  # type: ignore
+except ModuleNotFoundError:
+    readline = None  # 在 Windows 上无此模块，忽略即可
 
 # API配置
 API_BASE_URL = "http://localhost:8080"
@@ -743,6 +747,108 @@ class TradingCLI:
             msg = result.get('message', '未知错误') if result else '分析失败'
             print(f"❌ {msg}")
     
+    def indicators_info(self, symbol: str, duration: str = '3 M', bar_size: str = '1 day'):
+        """
+        技术指标解释 - 显示主要技术指标的参考范围与知识解释
+        """
+        print(f"获取 {symbol.upper()} 指标...")
+
+        # 标准化参数
+        import re
+        duration = re.sub(r'(\d+)([SDWMY])', r'\1 \2', duration, flags=re.IGNORECASE)
+        bar_size = bar_size.replace('min', ' min').replace('hour', ' hour').replace('day', ' day')
+        bar_size = re.sub(r'\s+', ' ', bar_size).strip()
+        if 'min' in bar_size and not bar_size.endswith('mins'):
+            bar_size = bar_size.replace('min', 'mins')
+
+        import urllib.parse
+        params = f"?duration={urllib.parse.quote(duration)}&bar_size={urllib.parse.quote(bar_size)}"
+        result = self._request('GET', f"/api/analyze/{symbol.upper()}{params}")
+
+        if not (result and result.get('success')):
+            msg = result.get('message', '未知错误') if result else '查询失败'
+            print(f"❌ {msg}")
+            return
+
+        indicators = result.get('indicators', {})
+
+        print("\n📘 技术指标参考与解释:")
+        print("=" * 70)
+
+        # 当前价格
+        if 'current_price' in indicators:
+            print(f"当前价: ${indicators['current_price']:.2f}")
+
+        # 移动平均线
+        has_ma = any(k in indicators for k in ['ma5', 'ma10', 'ma20', 'ma50'])
+        if has_ma:
+            print("\n[移动平均线 MA]")
+            for period in [5, 10, 20, 50]:
+                key = f"ma{period}"
+                if key in indicators:
+                    print(f"  MA{period}: ${indicators[key]:.2f}  —  用于观察{('短期' if period==5 else '中短期' if period==10 else '中期' if period==20 else '长期')}趋势与支撑/压力")
+            print("  解释: 价格上穿均线常视为偏强，下穿视为偏弱；多均线多头/空头排列用于判断趋势延续。")
+
+        # RSI
+        if 'rsi' in indicators:
+            rsi = indicators['rsi']
+            print("\n[RSI 相对强弱指数]")
+            print(f"  当前: {rsi:.1f}  参考: <30 超卖；30-70 区间；>70 超买")
+            print("  解释: RSI 衡量价格动能，极端值提示可能的反转风险，但需结合趋势。")
+
+        # 布林带
+        if all(k in indicators for k in ['bb_upper', 'bb_middle', 'bb_lower']):
+            print("\n[布林带 Bollinger Bands]")
+            print(f"  上轨: ${indicators['bb_upper']:.2f}  中轨: ${indicators['bb_middle']:.2f}  下轨: ${indicators['bb_lower']:.2f}")
+            print("  参考: 价格接近上轨可能回调，接近下轨可能反弹；带宽扩大常伴随波动放大。")
+
+        # MACD
+        if 'macd' in indicators:
+            macd_val = indicators['macd']
+            signal = indicators.get('macd_signal', 0)
+            hist = indicators.get('macd_histogram', 0)
+            print("\n[MACD 指标]")
+            print(f"  MACD: {macd_val:.3f}  Signal: {signal:.3f}  Hist: {hist:.3f}")
+            print("  参考: 金叉(>Signal)偏强，死叉(<Signal)偏弱；柱体由负转正常视为动能改善。")
+
+        # KDJ
+        if all(k in indicators for k in ['kdj_k', 'kdj_d', 'kdj_j']):
+            print("\n[KDJ 指标]")
+            print(f"  K={indicators['kdj_k']:.1f}  D={indicators['kdj_d']:.1f}  J={indicators['kdj_j']:.1f}")
+            print("  参考: J<20 常见超卖，J>80 常见超买；K 上穿 D 视为偏强信号。")
+
+        # 威廉%R
+        if 'williams_r' in indicators:
+            wr = indicators['williams_r']
+            print("\n[Williams %R]")
+            print(f"  当前: {wr:.1f}  参考: < -80 超卖；> -20 超买")
+            print("  解释: 与 RSI 类似，用于刻画超买超卖区间，宜结合趋势判读。")
+
+        # ATR / 波动率
+        if 'atr' in indicators or 'volatility_20' in indicators:
+            print("\n[波动与风险]")
+            if 'atr' in indicators:
+                atr = indicators['atr']
+                atr_pct = indicators.get('atr_percent', 0)
+                print(f"  ATR: ${atr:.2f} ({atr_pct:.1f}%)  —  近段真实波幅，用于设置止损与仓位。")
+            if 'volatility_20' in indicators:
+                vol = indicators['volatility_20']
+                level = '低' if vol <= 2 else '中' if vol <= 3 else '高' if vol <= 5 else '极高'
+                print(f"  20日波动率: {vol:.2f}% ({level})  —  波动大时风险与机会并存。")
+
+        # 关键价位
+        if 'pivot' in indicators:
+            print("\n[枢轴与支撑/压力]")
+            print(f"  Pivot: ${indicators.get('pivot', 0):.2f}")
+            if 'pivot_r1' in indicators:
+                print(f"  压力: R1=${indicators['pivot_r1']:.2f}  R2=${indicators.get('pivot_r2', 0):.2f}  R3=${indicators.get('pivot_r3', 0):.2f}")
+            if 'pivot_s1' in indicators:
+                print(f"  支撑: S1=${indicators['pivot_s1']:.2f}  S2=${indicators.get('pivot_s2', 0):.2f}  S3=${indicators.get('pivot_s3', 0):.2f}")
+            print("  解释: 接近支撑关注反弹，接近压力关注回落；破位需结合量价确认。")
+
+        # 提示
+        print("\n提示: 指标应结合趋势、量能与基本面综合判断，单一信号不可孤立使用。")
+
     def history(self, symbol: str, duration: str = '1 D', bar_size: str = '5 mins'):
         """
         查询历史数据
@@ -935,6 +1041,7 @@ class TradingCLI:
   a              账户        p              持仓
   o              订单        q  AAPL        报价
   i  AAPL        详情        an AAPL        技术分析
+  ti AAPL        指标解释    ti AAPL 3M 1day 自定义周期
 
 📊 交易:
   b AAPL 10      市价买      b AAPL 10 175  限价买
@@ -1049,6 +1156,15 @@ def main():
                     duration = args[1] if len(args) > 1 else '3 M'
                     bar_size = args[2] if len(args) > 2 else '1 day'
                     cli.analyze(symbol, duration, bar_size)
+
+            elif cmd in ['ti', 'ti-info', 'indicators']:
+                if len(args) < 1:
+                    print("❌ 用法: ti <symbol> [duration] [bar_size]")
+                else:
+                    symbol = args[0]
+                    duration = args[1] if len(args) > 1 else '3 M'
+                    bar_size = args[2] if len(args) > 2 else '1 day'
+                    cli.indicators_info(symbol, duration, bar_size)
                     
             elif cmd in ['history', 'hi']:
                 if len(args) < 1:
