@@ -37,7 +37,8 @@ gateway = None
 class IBGateway(EWrapper, EClient):
     """
     Interactive Brokers 交易网关
-    继承EWrapper处理回调，继承EClient发送请求
+    继承EWrapper处理回调，继承
+    发送请求
     """
     
     def __init__(self):
@@ -353,9 +354,9 @@ class IBGateway(EWrapper, EClient):
             
     # ==================== 网关操作方法 ====================
     
-    def connect_gateway(self, host='127.0.0.1', port=4001, client_id=1):
+    def connect_gateway(self, host='127.0.0.1', port=7496, client_id=1):
         """
-        连接到IB Gateway或TWS
+        连接到IB TWS
         """
         logger.info(f"连接 {host}:{port}, ClientId: {client_id}")
         
@@ -1576,11 +1577,11 @@ def health():
 @app.route('/api/connect', methods=['POST'])
 def connect():
     """
-    连接到IB Gateway
+    连接到IB TWS
     请求参数:
     {
         "host": "127.0.0.1",
-        "port": 4001,
+        "port": 7496,
         "client_id": 1
     }
     """
@@ -1588,7 +1589,7 @@ def connect():
     
     data = request.get_json() or {}
     host = data.get('host', '127.0.0.1')
-    port = data.get('port', 4001)
+    port = data.get('port', 7496)
     client_id = data.get('client_id', 1)
     
     if gateway and gateway.connected:
@@ -2190,14 +2191,14 @@ def main():
     port = 8080
     logger.info(f"API服务启动 http://0.0.0.0:{port}")
     
-    # 自动连接到IB Gateway（带重试）
-    logger.info("自动连接到IB Gateway...")
+    # 自动连接到IB TWS（带重试）
+    logger.info("自动连接到IB TWS...")
     max_retries = 3
     for attempt in range(1, max_retries + 1):
         logger.info(f"尝试连接 ({attempt}/{max_retries})...")
         gateway = IBGateway()
         
-        if gateway.connect_gateway(host='127.0.0.1', port=4001, client_id=attempt):
+        if gateway.connect_gateway(host='127.0.0.1', port=7496, client_id=attempt):
             # 等待数据加载
             import time
             time.sleep(2)
