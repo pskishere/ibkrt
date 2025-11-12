@@ -680,6 +680,20 @@ class TradingCLI:
                 high_low_parts.append(f"低${indicators['support_20d_low']:.2f}")
             if high_low_parts:
                 print(f"  {' | '.join(high_low_parts)}")
+
+            # 宏观经济指标
+            macro_data = indicators.get('macro_indicators')
+            if isinstance(macro_data, dict) and macro_data:
+                print("=" * 70)
+                print("🌐 宏观经济指标 (FRED)")
+                for item in macro_data.values():
+                    title = item.get('title', '未知指标')
+                    date = item.get('date', '未知日期')
+                    value = item.get('value')
+                    unit = item.get('unit', '')
+                    value_display = f"{value:.2f}" if isinstance(value, (int, float)) and value is not None else str(value)
+                    print(f"  {title}: {value_display} ({unit}) | 日期: {date}")
+                print()
             
             # 买卖信号
             if signals:

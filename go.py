@@ -8,6 +8,7 @@
 """
 
 import logging
+import os
 import time
 import threading
 from datetime import datetime
@@ -17,6 +18,7 @@ from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 from ibapi.order import Order
+import requests
 
 # 配置日志
 logging.basicConfig(
@@ -61,6 +63,8 @@ class IBGateway(EWrapper, EClient):
         self.contract_details = {}  # 合约详情
         self.fundamental_data = {}  # 基本面数据
         self.req_id_counter = 1000  # 请求ID计数器
+        self._economic_cache = None  # 经济指标缓存
+        self._economic_cache_time = 0  # 缓存时间戳
         
         # 线程锁
         self.lock = threading.Lock()
@@ -897,8 +901,357 @@ class IBGateway(EWrapper, EClient):
         # 13. 趋势强度
         trend_info = self._analyze_trend_strength(closes, highs, lows)
         result.update(trend_info)
+
+        # 14. Ichimoku云图指标
+        ichimoku_data = self._calculate_ichimoku_cloud(highs, lows, closes)
+        result.update(ichimoku_data)
+
+        # 15. 斐波那契回撤位
+        fibonacci_levels = self._calculate_fibonacci_retracement(highs, lows)
+        result.update(fibonacci_levels)
+
+        # 16. 艾略特波浪预测
+        elliot_wave = self._calculate_elliott_wave(closes)
+        result.update(elliot_wave)
+
+        # 17. 机器学习预测模型
+        ml_predictions = self._calculate_ml_predictions(closes, highs, lows, volumes)
+        result.update(ml_predictions)
+
+        # 18. 宏观经济指标
+        macro_indicators = self.get_us_economic_indicators()
+        if macro_indicators:
+            result['macro_indicators'] = macro_indicators
             
         return result
+
+    def _calculate_ml_predictions(self, closes, highs, lows, volumes):
+        """
+        使用简单的机器学习模型进行趋势预测
+        """
+        import numpy as np
+        from sklearn.linear_model import LinearRegression
+        from sklearn.preprocessing import StandardScaler
+        
+        result = {}
+        
+        # 确保有足够的数据点
+        if len(closes) < 10:
+            return result
+            
+        # 准备特征数据
+        # 特征1: 过去5天的价格变化率
+        price_changes = np.diff(closes) / closes[:-1]
+        recent_changes = price_changes[-5:] if len(price_changes) >= 5 else price_changes
+        
+        # 特征2: 过去5天的成交量变化率
+        volume_changes = np.diff(volumes) / (volumes[:-1] + 1e-8)  # 避免除以零
+        recent_volume_changes = volume_changes[-5:] if len(volume_changes) >= 5 else volume_changes
+        
+        # 特征3: 当前价格相对于近期高点和低点的位置
+        recent_high = np.max(highs[-10:])
+        recent_low = np.min(lows[-10:])
+        price_position = (closes[-1] - recent_low) / (recent_high - recent_low + 1e-8)
+        
+        # 特征4: 波动率
+        volatility = np.std(price_changes[-10:]) if len(price_changes) >= 10 else 0
+        
+        # 创建特征向量
+        features = np.concatenate([recent_changes, recent_volume_changes])
+        features = np.append(features, [price_position, volatility])
+        
+        # 简单的线性回归预测未来1天的价格变化
+        # 使用过去10天的数据来训练模型
+        if len(closes) >= 10:
+            # 创建训练数据
+            X = []
+            y = []
+            
+            # 使用过去几天的数据来创建训练样本
+            for i in range(5, len(closes)):
+                # 特征：过去5天的价格变化和成交量变化
+                pc = np.diff(closes[max(0, i-5):i]) / closes[max(0, i-5):i-1] if i > 1 else [0]
+                vc = np.diff(volumes[max(0, i-5):i]) / (volumes[max(0, i-5):i-1] + 1e-8) if i > 1 else [0]
+                
+                # 填充到固定长度
+                pc = np.pad(pc, (max(0, 5-len(pc)), 0), 'constant')
+                vc = np.pad(vc, (max(0, 5-len(vc)), 0), 'constant')
+                
+                # 目标：下一天的价格变化率
+                if i < len(closes) - 1:
+                    target = (closes[i+1] - closes[i]) / closes[i]
+                    X.append(np.concatenate([pc, vc]))
+                    y.append(target)
+            
+            if len(X) > 2:
+                # 训练模型
+                X = np.array(X)
+                y = np.array(y)
+                
+                # 标准化特征
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(X)
+                
+                # 训练线性回归模型
+                model = LinearRegression()
+                model.fit(X_scaled, y)
+                
+                # 预测
+                current_features = np.array(features[:10]).reshape(1, -1)
+                current_features_scaled = scaler.transform(current_features)
+                prediction = model.predict(current_features_scaled)[0]
+                
+                result['ml_prediction'] = float(prediction)
+                result['ml_confidence'] = float(np.abs(prediction) * 100)  # 简单的置信度计算
+                
+                # 预测方向
+                if prediction > 0.01:
+                    result['ml_trend'] = 'up'
+                elif prediction < -0.01:
+                    result['ml_trend'] = 'down'
+                else:
+                    result['ml_trend'] = 'sideways'
+                    
+        return result
+
+    def _calculate_ichimoku_cloud(self, highs, lows, closes):
+        """
+        计算Ichimoku云图指标
+        """
+        import numpy as np
+        
+        result = {}
+        
+        # 确保有足够的数据点
+        if len(closes) < 52:
+            return result
+            
+        # 转换线 (Tenkan-sen) - 9日周期 (高+低)/2
+        period_9 = 9
+        tenkan_sen = (np.max(highs[-period_9:]) + np.min(lows[-period_9:])) / 2
+        result['ichimoku_tenkan_sen'] = float(tenkan_sen)
+        
+        # 基准线 (Kijun-sen) - 26日周期 (高+低)/2
+        period_26 = 26
+        if len(closes) >= period_26:
+            kijun_sen = (np.max(highs[-period_26:]) + np.min(lows[-period_26:])) / 2
+            result['ichimoku_kijun_sen'] = float(kijun_sen)
+            
+            # 先行跨度A (Senkou Span A) - (转换线+基准线)/2，向前推26日
+            senkou_span_a = (tenkan_sen + kijun_sen) / 2
+            result['ichimoku_senkou_span_a'] = float(senkou_span_a)
+            
+        # 先行跨度B (Senkou Span B) - 52日周期 (高+低)/2，向前推26日
+        period_52 = 52
+        if len(closes) >= period_52:
+            senkou_span_b = (np.max(highs[-period_52:]) + np.min(lows[-period_52:])) / 2
+            result['ichimoku_senkou_span_b'] = float(senkou_span_b)
+            
+        # 迟行跨度 (Chikou Span) - 当前收盘价，向后推26日
+        if len(closes) >= period_26:
+            result['ichimoku_chikou_span'] = float(closes[-period_26])
+            
+        return result
+
+    def _calculate_fibonacci_retracement(self, highs, lows):
+        """
+        计算斐波那契回撤位
+        """
+        import numpy as np
+        
+        result = {}
+        
+        # 确保有足够的数据点
+        if len(highs) < 2 or len(lows) < 2:
+            return result
+            
+        # 找到最近的高点和低点
+        recent_high = float(np.max(highs[-20:]))
+        recent_low = float(np.min(lows[-20:]))
+        
+        # 计算价格范围
+        price_range = recent_high - recent_low
+        
+        # 斐波那契回撤水平 (23.6%, 38.2%, 50%, 61.8%, 78.6%)
+        fib_levels = {
+            'fib_23.6': recent_high - (price_range * 0.236),
+            'fib_38.2': recent_high - (price_range * 0.382),
+            'fib_50.0': recent_high - (price_range * 0.5),
+            'fib_61.8': recent_high - (price_range * 0.618),
+            'fib_78.6': recent_high - (price_range * 0.786)
+        }
+        
+        # 转换为浮点数
+        for key, value in fib_levels.items():
+            result[key] = float(value)
+            
+        # 添加最近高低点信息
+        result['fib_recent_high'] = recent_high
+        result['fib_recent_low'] = recent_low
+        
+        return result
+
+    def _calculate_elliott_wave(self, closes):
+        """
+        艾略特波浪理论分析（简化版）
+        """
+        import numpy as np
+        
+        result = {}
+        
+        # 确保有足够的数据点
+        if len(closes) < 10:
+            return result
+            
+        # 计算价格变化百分比
+        price_changes = np.diff(closes) / closes[:-1] * 100
+        
+        # 简单的波浪识别（基于最近的价格波动模式）
+        # 这是一个非常简化的实现，实际的艾略特波浪分析要复杂得多
+        
+        # 计算最近5天的波动
+        recent_changes = price_changes[-5:]
+        
+        # 判断趋势方向
+        avg_change = np.mean(recent_changes)
+        
+        if avg_change > 1:
+            result['elliott_wave_trend'] = 'up'
+            result['elliott_wave_strength'] = float(avg_change)
+        elif avg_change < -1:
+            result['elliott_wave_trend'] = 'down'
+            result['elliott_wave_strength'] = float(abs(avg_change))
+        else:
+            result['elliott_wave_trend'] = 'sideways'
+            result['elliott_wave_strength'] = 0.0
+            
+        # 波动性评估
+        volatility = np.std(recent_changes)
+        result['elliott_wave_volatility'] = float(volatility)
+        
+        return result
+
+    def get_us_economic_indicators(self, refresh: bool = False):
+        """
+        获取美国政府发布的核心宏观经济指标（来自FRED）
+        """
+        cache_valid = (
+            self._economic_cache
+            and (time.time() - self._economic_cache_time) < 3600
+            and not refresh
+        )
+
+        if cache_valid:
+            return self._economic_cache
+
+        api_key = os.getenv('FRED_API_KEY')
+        print(api_key)
+        if not api_key:
+            logger.warning("未设置环境变量 FRED_API_KEY，跳过宏观经济指标获取")
+            return self._economic_cache
+
+        indicator_map = {
+            'gdp_real': {
+                'series_id': 'GDPC1',
+                'name': '美国实际GDP（季度）',
+            },
+            'cpi': {
+                'series_id': 'CPIAUCSL',
+                'name': '美国居民消费价格指数（CPI）',
+            },
+            'core_pce': {
+                'series_id': 'PCEPILFE',
+                'name': '美国核心PCE物价指数',
+            },
+            'unemployment_rate': {
+                'series_id': 'UNRATE',
+                'name': '美国失业率',
+            },
+            'nonfarm_payroll': {
+                'series_id': 'PAYEMS',
+                'name': '美国非农就业人数',
+            },
+            'industrial_production': {
+                'series_id': 'INDPRO',
+                'name': '美国工业生产指数',
+            },
+            'retail_sales': {
+                'series_id': 'RSAFS',
+                'name': '美国零售销售额',
+            },
+            'housing_starts': {
+                'series_id': 'HOUST',
+                'name': '美国新屋开工数',
+            },
+            'federal_funds_rate': {
+                'series_id': 'FEDFUNDS',
+                'name': '联邦基金利率',
+            },
+        }
+
+        indicators = {}
+        for key, meta in indicator_map.items():
+            series_data = self._fetch_fred_series(meta['series_id'], api_key)
+            if series_data:
+                indicators[key] = {
+                    'title': meta['name'],
+                    'series_id': meta['series_id'],
+                    'date': series_data['date'],
+                    'value': series_data['value'],
+                    'unit': series_data['unit'],
+                }
+
+        if indicators:
+            self._economic_cache = indicators
+            self._economic_cache_time = time.time()
+        else:
+            logger.warning("FRED经济指标请求失败或返回空数据")
+
+        return self._economic_cache
+
+    def _fetch_fred_series(self, series_id: str, api_key: str, limit: int = 1):
+        """
+        调用FRED接口获取指定经济指标的最新数据
+        """
+        params = {
+            'series_id': series_id,
+            'api_key': api_key,
+            'file_type': 'json',
+            'sort_order': 'desc',
+            'limit': limit,
+        }
+
+        try:
+            response = requests.get(
+                'https://api.stlouisfed.org/fred/series/observations',
+                params=params,
+                timeout=5,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            observations = data.get('observations', [])
+            if not observations:
+                return None
+
+            latest = observations[0]
+            value_str = latest.get('value', '')
+            try:
+                value = float(value_str)
+            except (TypeError, ValueError):
+                value = None
+
+            # 单位信息位于series metadata中，若不存在则返回空字符串
+            unit = data.get('units', '') or ''
+
+            return {
+                'date': latest.get('date'),
+                'value': value,
+                'unit': unit,
+            }
+        except requests.RequestException as exc:
+            logger.error(f"获取FRED指标失败: {series_id}, 错误: {exc}")
+            return None
     
     def _calculate_support_resistance(self, closes, highs, lows):
         """
@@ -1503,6 +1856,22 @@ class IBGateway(EWrapper, EClient):
                 risk_score += 15
                 risk_factors.append('量价背离')
         
+        # 7. 机器学习预测风险
+        if 'ml_trend' in indicators:
+            ml_trend = indicators['ml_trend']
+            ml_confidence = indicators.get('ml_confidence', 0)
+            
+            # 如果机器学习模型预测趋势与当前趋势相反，增加风险
+            current_trend = indicators.get('trend_direction', 'neutral')
+            if (ml_trend == 'up' and current_trend == 'down') or (ml_trend == 'down' and current_trend == 'up'):
+                risk_score += 10
+                risk_factors.append('ML模型预测与当前趋势相反')
+            
+            # 如果机器学习模型置信度低，增加风险
+            if ml_confidence < 30:
+                risk_score += 5
+                risk_factors.append('ML模型置信度低')
+        
         # 判断风险等级（返回英文标识符，前端负责显示）
         if risk_score >= 70:
             level = 'very_high'
@@ -1556,6 +1925,69 @@ class IBGateway(EWrapper, EClient):
         else:
             result['stop_loss'] = float(current_price * 0.95)  # -5%
             result['take_profit'] = float(current_price * 1.10)  # +10%
+        
+        # 仓位管理建议
+        position_sizing = self._calculate_position_sizing(indicators, result)
+        result.update(position_sizing)
+        
+        return result
+    
+    def _calculate_position_sizing(self, indicators: dict, stop_loss_data: dict):
+        """
+        计算建议的仓位大小和风险管理
+        """
+        result = {}
+        
+        current_price = indicators.get('current_price')
+        stop_loss = stop_loss_data.get('stop_loss')
+        
+        if not current_price or not stop_loss:
+            return result
+            
+        # 计算每股风险
+        risk_per_share = current_price - stop_loss
+        
+        # 假设账户风险承受能力为总资金的2%
+        # 这里我们使用一个示例账户价值，实际应用中应该从账户信息获取
+        account_value = 100000  # 假设账户价值为10万美元
+        max_risk_amount = account_value * 0.02  # 最大风险金额为账户的2%
+        
+        # 计算建议仓位大小
+        if risk_per_share > 0:
+            suggested_position_size = int(max_risk_amount / risk_per_share)
+            result['suggested_position_size'] = suggested_position_size
+            result['position_risk_amount'] = float(suggested_position_size * risk_per_share)
+            
+            # 计算仓位价值
+            position_value = suggested_position_size * current_price
+            result['position_value'] = float(position_value)
+            
+            # 计算仓位占账户比例
+            position_ratio = (position_value / account_value) * 100
+            result['position_ratio'] = float(position_ratio)
+            
+            # 根据风险等级调整仓位
+            risk_level = indicators.get('risk_level', 'medium')
+            risk_multiplier = {
+                'very_low': 1.5,
+                'low': 1.2,
+                'medium': 1.0,
+                'high': 0.7,
+                'very_high': 0.5
+            }
+            
+            adjusted_position_size = int(suggested_position_size * risk_multiplier.get(risk_level, 1.0))
+            result['adjusted_position_size'] = adjusted_position_size
+            
+            # 添加仓位管理建议
+            result['position_sizing_advice'] = {
+                'max_risk_percent': 2,  # 最大风险百分比
+                'risk_per_share': float(risk_per_share),
+                'suggested_size': suggested_position_size,
+                'adjusted_size': adjusted_position_size,
+                'position_value': float(position_value),
+                'account_value': account_value
+            }
         
         return result
 
@@ -2058,6 +2490,23 @@ def ai_analyze_stock(symbol):
     # 使用AI分析
     try:
         import ollama
+
+        macro_data = indicators.get('macro_indicators', {})
+        if isinstance(macro_data, dict) and macro_data:
+            macro_lines = []
+            for item in macro_data.values():
+                title = item.get('title', '未知指标')
+                value = item.get('value')
+                unit = item.get('unit', '')
+                date = item.get('date', '')
+                if isinstance(value, (int, float)) and value is not None:
+                    value_display = f"{value:.2f}"
+                else:
+                    value_display = str(value)
+                macro_lines.append(f"{title}: {value_display} ({unit}) - 数据日期: {date}")
+            macro_text = "\n".join(macro_lines)
+        else:
+            macro_text = "无"
         
         # 构建提示词
         prompt = f"""你是一位专业的股票技术分析师。请基于以下技术指标数据，给出详细的交易分析和建议。
@@ -2099,20 +2548,40 @@ def ai_analyze_stock(symbol):
    - 压力位R1: ${indicators.get('pivot_r1', 0):.2f}
    - 支撑位S1: ${indicators.get('pivot_s1', 0):.2f}
 
-7. 风险评估:
-   - 风险等级: {signals.get('risk', {}).get('level', 'unknown')}
-   - 风险评分: {signals.get('risk', {}).get('score', 0)}/100
+7. 现代技术指标:
+   - Ichimoku云图:
+     * 转换线: ${indicators.get('ichimoku_tenkan_sen', 0):.2f}
+     * 基准线: ${indicators.get('ichimoku_kijun_sen', 0):.2f}
+     * 先行跨度A: ${indicators.get('ichimoku_senkou_span_a', 0):.2f}
+     * 先行跨度B: ${indicators.get('ichimoku_senkou_span_b', 0):.2f}
+   - 斐波那契回撤位:
+     * 23.6%: ${indicators.get('fib_23.6', 0):.2f}
+     * 38.2%: ${indicators.get('fib_38.2', 0):.2f}
+     * 50.0%: ${indicators.get('fib_50.0', 0):.2f}
+     * 61.8%: ${indicators.get('fib_61.8', 0):.2f}
+     * 78.6%: ${indicators.get('fib_78.6', 0):.2f}
+   - 艾略特波浪:
+     * 趋势: {indicators.get('elliott_wave_trend', 'unknown')}
+     * 强度: {indicators.get('elliott_wave_strength', 0):.2f}%
 
-8. 系统建议:
+8. 风险评估:
+   - 风险等级: {signals.get('risk', {}).get('level', 'unknown') if signals.get('risk') else 'unknown'}
+   - 风险评分: {signals.get('risk', {}).get('score', 0) if signals.get('risk') else 0}/100
+
+9. 系统建议:
    - 综合评分: {signals.get('score', 0)}/100
    - 建议操作: {signals.get('recommendation', 'unknown')}
 
+宏观经济指标:
+{macro_text}
+
 请提供:
 1. 当前市场状态分析（趋势、动能、波动）
-2. 关键技术信号解读
+2. 关键技术信号解读（包括Ichimoku云图、斐波那契回撤位、艾略特波浪等现代技术指标）
 3. 买入/卖出/观望的具体建议
 4. 风险提示和注意事项
 5. 建议的止损止盈位
+6. 市场情绪和可能的情境分析（如牛市、熊市、震荡市中的不同策略）
 
 请用中文回答，简洁专业，重点突出。"""
 
