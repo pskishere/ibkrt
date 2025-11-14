@@ -6,10 +6,15 @@ IB Trading Gateway 交互式命令行客户端
 通过命令行对接API后端服务
 """
 
-import requests
-import json
+# 标准库导入
+import re
 import shlex
+import urllib.parse
 from typing import Optional
+
+# 第三方库导入
+import requests
+
 # 尝试启用命令行历史和编辑（macOS/Linux 可用）
 try:
     import readline  # type: ignore
@@ -363,14 +368,12 @@ class TradingCLI:
         print(f"请稍候，AI正在分析中...")
         
         # 标准化参数
-        import re
         duration = re.sub(r'(\d+)([SDWMY])', r'\1 \2', duration, flags=re.IGNORECASE)
         bar_size = bar_size.replace('min', ' min').replace('hour', ' hour').replace('day', ' day')
         bar_size = re.sub(r'\s+', ' ', bar_size).strip()
         if 'min' in bar_size and not bar_size.endswith('mins'):
             bar_size = bar_size.replace('min', 'mins')
         
-        import urllib.parse
         params = f"?duration={urllib.parse.quote(duration)}&bar_size={urllib.parse.quote(bar_size)}&model={urllib.parse.quote(model)}"
         result = self._request('GET', f'/api/ai-analyze/{symbol.upper()}{params}', timeout=60)  # AI分析需要更长时间
         
@@ -433,23 +436,29 @@ class TradingCLI:
             msg = result.get('message', '未知错误') if result else '分析失败'
             print(f"❌ {msg}")
     
-    def analyze(self, symbol: str, duration: str = '3 M', bar_size: str = '1 day'):
+    def analyze(self, symbol: str, duration: str = '3 M', bar_size: str = '1 day', model: str = 'deepseek-v3.1:671b-cloud'):
         """
         技术分析 - 生成买卖信号（默认3个月日K线）
+        后端会自动检测 Ollama 是否可用，如果可用则自动执行AI分析
+        
+        参数:
+        - symbol: 股票代码
+        - duration: 数据周期 (默认: '3 M')
+        - bar_size: K线周期 (默认: '1 day')
+        - model: AI模型名称 (默认: 'deepseek-v3.1:671b-cloud')，仅在Ollama可用时使用
         """
         print(f"分析 {symbol.upper()}...")
         
         # 标准化参数
-        import re
         duration = re.sub(r'(\d+)([SDWMY])', r'\1 \2', duration, flags=re.IGNORECASE)
         bar_size = bar_size.replace('min', ' min').replace('hour', ' hour').replace('day', ' day')
         bar_size = re.sub(r'\s+', ' ', bar_size).strip()
         if 'min' in bar_size and not bar_size.endswith('mins'):
             bar_size = bar_size.replace('min', 'mins')
         
-        import urllib.parse
-        params = f"?duration={urllib.parse.quote(duration)}&bar_size={urllib.parse.quote(bar_size)}"
-        result = self._request('GET', f'/api/analyze/{symbol.upper()}{params}')
+        params = f"?duration={urllib.parse.quote(duration)}&bar_size={urllib.parse.quote(bar_size)}&model={urllib.parse.quote(model)}"
+        
+        result = self._request('GET', f'/api/analyze/{symbol.upper()}{params}', timeout=60)  # AI分析可能需要更长时间
         
         if result and result.get('success'):
             indicators = result.get('indicators', {})
@@ -968,6 +977,264 @@ class TradingCLI:
                 
                 print(f"=" * 70)
                 
+                # 显示缠论分析
+                chanlun_data = indicators.get('fractals') or indicators.get('strokes') or indicators.get('segments')
+                if chanlun_data:
+                    current_price = indicators.get('current_price', 0)
+                    
+                    print(f"\n{'='*70}")
+                    print(f"📐 缠论分析 (缠中说禅技术分析)")
+                    print(f"{'='*70}")
+                    print(f"💡 缠论基础概念:")
+                    print(f"  • 分型: 价格转折点，顶分型=高点，底分型=低点")
+                    print(f"  • 笔: 连接相邻分型的线段，代表价格运行方向")
+                    print(f"  • 线段: 由多笔组成，反映更大级别的趋势")
+                    print(f"  • 中枢: 价格震荡区间，是多空力量平衡区域")
+                    print(f"  • 买卖点: 一买/二买/三买(买入)，一卖/二卖/三卖(卖出)")
+                    
+                    # 走势类型
+                    trend_type = indicators.get('trend_type', 'unknown')
+                    trend_map = {
+                        'up': '📈 上涨趋势',
+                        'down': '📉 下跌趋势',
+                        'consolidation': '➡️ 盘整震荡',
+                        'unknown': '⚪ 趋势不明'
+                    }
+                    trend_explanation = {
+                        'up': '当前处于上涨趋势，适合做多或持有',
+                        'down': '当前处于下跌趋势，适合做空或观望',
+                        'consolidation': '价格在区间内震荡，等待方向选择',
+                        'unknown': '数据不足，无法判断趋势'
+                    }
+                    print(f"\n📊 当前走势类型: {trend_map.get(trend_type, trend_type)}")
+                    print(f"   {trend_explanation.get(trend_type, '')}")
+                    
+                    # 分型统计和详细说明
+                    fractal_count = indicators.get('fractal_count', {})
+                    fractals = indicators.get('fractals', {})
+                    if fractal_count:
+                        top_count = fractal_count.get('top', 0)
+                        bottom_count = fractal_count.get('bottom', 0)
+                        total = fractal_count.get('total', 0)
+                        
+                        print(f"\n🔍 分型识别 (价格转折点):")
+                        print(f"  顶分型: {top_count}个 (价格高点，可能回调)")
+                        print(f"  底分型: {bottom_count}个 (价格低点，可能反弹)")
+                        print(f"  总计: {total}个分型")
+                        
+                        # 显示最近的分型
+                        top_fractals = fractals.get('top_fractals', [])
+                        bottom_fractals = fractals.get('bottom_fractals', [])
+                        
+                        if top_fractals:
+                            latest_top = top_fractals[-1]
+                            dist_from_top = current_price - latest_top['price']
+                            dist_pct_top = (dist_from_top / latest_top['price']) * 100
+                            print(f"\n  最近顶分型: ${latest_top['price']:.2f}")
+                            if dist_pct_top < 0:
+                                print(f"    当前价 ${current_price:.2f} 低于顶分型 {abs(dist_pct_top):.2f}% (已回调)")
+                            else:
+                                print(f"    当前价 ${current_price:.2f} 高于顶分型 {dist_pct_top:.2f}% (已突破)")
+                        
+                        if bottom_fractals:
+                            latest_bottom = bottom_fractals[-1]
+                            dist_from_bottom = current_price - latest_bottom['price']
+                            dist_pct_bottom = (dist_from_bottom / latest_bottom['price']) * 100
+                            print(f"  最近底分型: ${latest_bottom['price']:.2f}")
+                            if dist_pct_bottom > 0:
+                                print(f"    当前价 ${current_price:.2f} 高于底分型 {dist_pct_bottom:.2f}% (已反弹)")
+                            else:
+                                print(f"    当前价 ${current_price:.2f} 低于底分型 {abs(dist_pct_bottom):.2f}% (已跌破)")
+                    
+                    # 最近的笔（详细说明）
+                    latest_stroke = indicators.get('latest_stroke')
+                    if latest_stroke:
+                        stroke_type_icon = "📈" if latest_stroke['type'] == 'up' else "📉"
+                        stroke_type_name = "上涨笔" if latest_stroke['type'] == 'up' else "下跌笔"
+                        print(f"\n✏️  当前笔 (连接分型的线段):")
+                        print(f"  方向: {stroke_type_icon} {stroke_type_name}")
+                        print(f"  起点价格: ${latest_stroke['start_price']:.2f}")
+                        print(f"  终点价格: ${latest_stroke['end_price']:.2f}")
+                        print(f"  价格变化: {latest_stroke['price_change_pct']:+.2f}%")
+                        print(f"  长度: {latest_stroke.get('length', 0)}根K线")
+                        
+                        if latest_stroke['type'] == 'up':
+                            print(f"  💡 说明: 这是一段上涨笔，从${latest_stroke['start_price']:.2f}涨到${latest_stroke['end_price']:.2f}")
+                            if current_price >= latest_stroke['end_price'] * 0.95:
+                                print(f"  ⚠️  当前价格接近笔的终点，注意是否形成新的顶分型")
+                        else:
+                            print(f"  💡 说明: 这是一段下跌笔，从${latest_stroke['start_price']:.2f}跌到${latest_stroke['end_price']:.2f}")
+                            if current_price <= latest_stroke['end_price'] * 1.05:
+                                print(f"  ⚠️  当前价格接近笔的终点，注意是否形成新的底分型")
+                    
+                    # 最近的线段（详细说明）
+                    latest_segment = indicators.get('latest_segment')
+                    if latest_segment:
+                        segment_type_icon = "📈" if latest_segment['type'] == 'up' else "📉"
+                        segment_type_name = "上涨线段" if latest_segment['type'] == 'up' else "下跌线段"
+                        print(f"\n📏 当前线段 (由多笔组成的大级别趋势):")
+                        print(f"  方向: {segment_type_icon} {segment_type_name}")
+                        print(f"  起点价格: ${latest_segment['start_price']:.2f}")
+                        print(f"  终点价格: ${latest_segment['end_price']:.2f}")
+                        print(f"  价格变化: {latest_segment['price_change_pct']:+.2f}%")
+                        print(f"  包含笔数: {latest_segment.get('stroke_count', 0)}笔")
+                        
+                        if latest_segment['type'] == 'up':
+                            print(f"  💡 说明: 这是上涨线段，代表较大级别的上涨趋势")
+                            if current_price >= latest_segment['end_price'] * 0.98:
+                                print(f"  ⚠️  价格接近线段终点，可能面临回调或形成新线段")
+                        else:
+                            print(f"  💡 说明: 这是下跌线段，代表较大级别的下跌趋势")
+                            if current_price <= latest_segment['end_price'] * 1.02:
+                                print(f"  ⚠️  价格接近线段终点，可能面临反弹或形成新线段")
+                    
+                    # 最近的中枢（详细说明）
+                    latest_cb = indicators.get('latest_central_bank')
+                    if latest_cb:
+                        position_map = {
+                            'above': '上方（已突破）',
+                            'below': '下方（已跌破）',
+                            'inside': '内部（震荡中）'
+                        }
+                        position_icon = {
+                            'above': '⬆️',
+                            'below': '⬇️',
+                            'inside': '➡️'
+                        }
+                        pos = latest_cb.get('position', 'unknown')
+                        
+                        print(f"\n🎯 最近中枢 (价格震荡区间，多空平衡区域):")
+                        print(f"  上沿(压力): ${latest_cb['high']:.2f}")
+                        print(f"  下沿(支撑): ${latest_cb['low']:.2f}")
+                        print(f"  中心价: ${latest_cb['center']:.2f}")
+                        print(f"  震荡宽度: {latest_cb['width_pct']:.2f}%")
+                        print(f"  当前位置: {position_icon.get(pos, '')} {position_map.get(pos, pos)}")
+                        
+                        # 计算当前价格与中枢的关系
+                        if pos == 'above':
+                            dist_above = ((current_price - latest_cb['high']) / latest_cb['high']) * 100
+                            print(f"  💡 说明: 价格已突破中枢上沿，距离上沿 {dist_above:.2f}%")
+                            print(f"  📈 操作建议: 突破有效，可关注是否回踩确认，或继续上涨")
+                        elif pos == 'below':
+                            dist_below = ((latest_cb['low'] - current_price) / latest_cb['low']) * 100
+                            print(f"  💡 说明: 价格已跌破中枢下沿，距离下沿 {dist_below:.2f}%")
+                            print(f"  📉 操作建议: 跌破有效，可能继续下跌，或等待反弹回中枢")
+                        else:
+                            dist_to_high = ((latest_cb['high'] - current_price) / current_price) * 100
+                            dist_to_low = ((current_price - latest_cb['low']) / current_price) * 100
+                            print(f"  💡 说明: 价格在中枢内震荡")
+                            print(f"  📊 距离上沿: {dist_to_high:.2f}% | 距离下沿: {dist_to_low:.2f}%")
+                            if dist_to_high < dist_to_low:
+                                print(f"  ⚠️  接近上沿，可能遇阻回落")
+                            else:
+                                print(f"  ⚠️  接近下沿，可能获得支撑反弹")
+                    
+                    # 买卖点（详细说明）
+                    trading_points = indicators.get('trading_points', {})
+                    buy_points = trading_points.get('buy_points', [])
+                    sell_points = trading_points.get('sell_points', [])
+                    
+                    if buy_points or sell_points:
+                        print(f"\n💰 缠论买卖点信号:")
+                        
+                        # 买卖点说明
+                        point_explanation = {
+                            '一买': '下跌趋势后的第一个底分型，最佳买入点',
+                            '二买': '一买后的回调低点，次佳买入点',
+                            '三买': '突破中枢后的回踩确认，强势买入点',
+                            '一卖': '上涨趋势后的第一个顶分型，最佳卖出点',
+                            '二卖': '一卖后的反弹高点，次佳卖出点',
+                            '三卖': '跌破中枢后的反弹确认，强势卖出点'
+                        }
+                        
+                        if buy_points:
+                            print(f"\n  🟢 买入信号:")
+                            for bp in buy_points:
+                                point_type = bp.get('type', '买点')
+                                price = bp.get('price', 0)
+                                desc = bp.get('description', '')
+                                explanation = point_explanation.get(point_type, '')
+                                
+                                print(f"    {point_type}: ${price:.2f}")
+                                print(f"      说明: {desc}")
+                                print(f"      含义: {explanation}")
+                                
+                                # 计算与当前价格的距离
+                                if current_price > 0:
+                                    dist = ((current_price - price) / price) * 100
+                                    if dist > 0:
+                                        print(f"      当前价 ${current_price:.2f} 已高于买点 {dist:.2f}% (已错过)")
+                                    else:
+                                        print(f"      当前价 ${current_price:.2f} 低于买点 {abs(dist):.2f}% (可关注)")
+                        
+                        if sell_points:
+                            print(f"\n  🔴 卖出信号:")
+                            for sp in sell_points:
+                                point_type = sp.get('type', '卖点')
+                                price = sp.get('price', 0)
+                                desc = sp.get('description', '')
+                                explanation = point_explanation.get(point_type, '')
+                                
+                                print(f"    {point_type}: ${price:.2f}")
+                                print(f"      说明: {desc}")
+                                print(f"      含义: {explanation}")
+                                
+                                # 计算与当前价格的距离
+                                if current_price > 0:
+                                    dist = ((current_price - price) / price) * 100
+                                    if dist < 0:
+                                        print(f"      当前价 ${current_price:.2f} 已低于卖点 {abs(dist):.2f}% (已错过)")
+                                    else:
+                                        print(f"      当前价 ${current_price:.2f} 高于卖点 {dist:.2f}% (可关注)")
+                    else:
+                        print(f"\n💰 买卖点信号: 暂无明确的买卖点信号")
+                        print(f"  💡 说明: 当前走势可能处于中间阶段，等待更明确的信号")
+                    
+                    # 综合操作建议
+                    print(f"\n📋 综合操作建议:")
+                    if trend_type == 'up':
+                        if latest_cb and latest_cb.get('position') == 'above':
+                            print(f"  ✅ 上涨趋势 + 突破中枢 = 强势信号，可考虑做多")
+                        elif latest_cb and latest_cb.get('position') == 'inside':
+                            print(f"  ⚠️  上涨趋势但价格在中枢内，等待突破确认")
+                        else:
+                            print(f"  📈 上涨趋势中，可考虑逢低买入或持有")
+                    elif trend_type == 'down':
+                        if latest_cb and latest_cb.get('position') == 'below':
+                            print(f"  ⚠️  下跌趋势 + 跌破中枢 = 弱势信号，建议观望或做空")
+                        elif latest_cb and latest_cb.get('position') == 'inside':
+                            print(f"  ⚠️  下跌趋势但价格在中枢内，等待跌破确认")
+                        else:
+                            print(f"  📉 下跌趋势中，建议观望或逢高卖出")
+                    else:
+                        print(f"  ➡️  盘整震荡中，建议等待方向选择")
+                    
+                    if buy_points:
+                        print(f"  🟢 有买入信号，可关注回调至买点附近的机会")
+                    if sell_points:
+                        print(f"  🔴 有卖出信号，可关注反弹至卖点附近的机会")
+                    
+                    print(f"{'='*70}")
+            
+            # 如果后端返回了AI分析结果，显示AI分析
+            if 'ai_analysis' in result:
+                ai_analysis = result.get('ai_analysis', '')
+                ai_model = result.get('model', 'unknown')
+                ai_available = result.get('ai_available', False)
+                
+                if ai_available:
+                    print(f"\n{'='*70}")
+                    print(f"🤖 {symbol.upper()} AI技术分析报告")
+                    print(f"{'='*70}")
+                    print(f"模型: {ai_model}")
+                    print(f"{'='*70}\n")
+                    
+                    # 显示AI分析
+                    print(ai_analysis)
+                    print(f"\n{'='*70}")
+                elif 'ai_error' in result:
+                    print(f"\n⚠️  AI分析不可用: {result.get('ai_error', '未知错误')}")
+                
         else:
             msg = result.get('message', '未知错误') if result else '分析失败'
             print(f"❌ {msg}")
@@ -979,14 +1246,12 @@ class TradingCLI:
         print(f"获取 {symbol.upper()} 指标...")
 
         # 标准化参数
-        import re
         duration = re.sub(r'(\d+)([SDWMY])', r'\1 \2', duration, flags=re.IGNORECASE)
         bar_size = bar_size.replace('min', ' min').replace('hour', ' hour').replace('day', ' day')
         bar_size = re.sub(r'\s+', ' ', bar_size).strip()
         if 'min' in bar_size and not bar_size.endswith('mins'):
             bar_size = bar_size.replace('min', 'mins')
 
-        import urllib.parse
         params = f"?duration={urllib.parse.quote(duration)}&bar_size={urllib.parse.quote(bar_size)}"
         result = self._request('GET', f"/api/analyze/{symbol.upper()}{params}")
 
@@ -1079,8 +1344,6 @@ class TradingCLI:
         查询历史数据
         """
         # 标准化参数格式（处理如 "1D" -> "1 D", "5mins" -> "5 mins"）
-        import re
-        
         # 处理duration: 1D -> 1 D, 1W -> 1 W等
         duration = re.sub(r'(\d+)([SDWMY])', r'\1 \2', duration, flags=re.IGNORECASE)
         
@@ -1095,7 +1358,6 @@ class TradingCLI:
         print(f"查询 {symbol.upper()}...")
         
         # URL编码参数
-        import urllib.parse
         params = f"?duration={urllib.parse.quote(duration)}&bar_size={urllib.parse.quote(bar_size)}"
         result = self._request('GET', f'/api/history/{symbol.upper()}{params}')
         
@@ -1129,131 +1391,31 @@ class TradingCLI:
             msg = result.get('message', '未知错误') if result else '查询失败'
             print(f"❌ {msg}")
     
-    def kline(self, symbol: str, duration: str = '1 M', bar_size: str = '1 day', show_volume: bool = False):
+    def hot_stocks(self, market: str = 'US', limit: int = 20):
         """
-        绘制K线图
+        获取热门股票代码列表
         """
-        # 标准化参数格式
-        import re
-        duration = re.sub(r'(\d+)([SDWMY])', r'\1 \2', duration, flags=re.IGNORECASE)
-        bar_size = bar_size.replace('min', ' min').replace('hour', ' hour').replace('day', ' day')
-        bar_size = re.sub(r'\s+', ' ', bar_size).strip()
-        if 'min' in bar_size and not bar_size.endswith('mins'):
-            bar_size = bar_size.replace('min', 'mins')
-        
-        print(f"加载 {symbol.upper()} K线数据...")
-        
-        # 获取历史数据
-        import urllib.parse
-        params = f"?duration={urllib.parse.quote(duration)}&bar_size={urllib.parse.quote(bar_size)}"
-        result = self._request('GET', f'/api/history/{symbol.upper()}{params}')
+        params = f"?market={market}&limit={limit}"
+        result = self._request('GET', f'/api/hot-stocks{params}')
         
         if result and result.get('success'):
-            data = result.get('data', [])
+            stocks = result.get('stocks', [])
+            market_name = result.get('market', market)
             
-            if not data:
-                print("⚠️  无数据")
-                return
+            print(f"\n🔥 {market_name} 热门股票 (共{len(stocks)}个):")
+            print("-" * 80)
+            print(f"{'代码':<10} {'名称':<30} {'类别':<15}")
+            print("-" * 80)
             
-            # 提取数据
-            dates = [bar.get('date', '') for bar in data]
-            opens = [bar.get('open', 0) for bar in data]
-            highs = [bar.get('high', 0) for bar in data]
-            lows = [bar.get('low', 0) for bar in data]
-            closes = [bar.get('close', 0) for bar in data]
-            volumes = [bar.get('volume', 0) for bar in data]
-            
-            # 绘制K线图
-            try:
-                import plotext as plt
-                from datetime import datetime
-                
-                # 清除之前的图表
-                plt.clear_figure()
-                
-                # 转换日期格式：20251024 -> 24/10/2025
-                formatted_dates = []
-                for date_str in dates:
-                    try:
-                        # 如果是 YYYYMMDD 格式
-                        if len(date_str) == 8 and date_str.isdigit():
-                            dt = datetime.strptime(date_str, '%Y%m%d')
-                            formatted_dates.append(dt.strftime('%d/%m/%Y'))
-                        # 如果已经是其他格式，尝试解析
-                        elif ' ' in date_str:
-                            dt = datetime.strptime(date_str.split()[0], '%Y%m%d')
-                            formatted_dates.append(dt.strftime('%d/%m/%Y'))
-                        else:
-                            formatted_dates.append(date_str)
-                    except:
-                        formatted_dates.append(date_str)
-                
-                # 准备K线数据（plotext需要字典格式）
-                ohlc_data = {
-                    'Open': opens,
-                    'Close': closes,
-                    'High': highs,
-                    'Low': lows
-                }
-                
-                # 设置日期格式
-                plt.date_form('d/m/Y')
-                
-                if show_volume:
-                    # 创建子图：K线 + 成交量
-                    plt.subplots(2, 1)
-                    
-                    # 上图：K线
-                    plt.subplot(1, 1)
-                    plt.candlestick(formatted_dates, ohlc_data)
-                    plt.plotsize(None, 20)
-                    plt.title(f"{symbol.upper()} K线图 ({duration})")
-                    plt.ylabel("价格 ($)")
-                    
-                    # 下图：成交量
-                    plt.subplot(2, 1)
-                    plt.bar(formatted_dates, volumes)
-                    plt.plotsize(None, 8)
-                    plt.xlabel("日期")
-                    plt.ylabel("成交量")
-                    
-                else:
-                    # 只显示K线
-                    plt.candlestick(formatted_dates, ohlc_data)
-                    plt.plotsize(None, 25)
-                    plt.title(f"{symbol.upper()} K线图 ({duration})")
-                    plt.xlabel("日期")
-                    plt.ylabel("价格 ($)")
-                
-                # 显示图表
-                plt.show()
-                
-                # 显示统计信息
-                current = closes[-1]
-                prev = closes[0]
-                change = current - prev
-                change_pct = (change / prev * 100) if prev > 0 else 0
-                icon = "📈" if change >= 0 else "📉"
-                
-                print(f"\n📊 区间统计:")
-                print(f"   当前价: ${current:.2f}")
-                print(f"   区间涨跌: {icon} ${change:+.2f} ({change_pct:+.2f}%)")
-                print(f"   最高: ${max(highs):.2f}")
-                print(f"   最低: ${min(lows):.2f}")
-                print(f"   数据点: {len(data)}根K线")
-                
-                if show_volume:
-                    avg_vol = sum(volumes) / len(volumes) if volumes else 0
-                    print(f"   平均成交量: {int(avg_vol):,}")
-                
-            except ImportError:
-                print("❌ 需要安装 plotext: pip install plotext")
-            except Exception as e:
-                print(f"❌ 绘图失败: {e}")
+            for stock in stocks:
+                symbol = stock.get('symbol', 'N/A')
+                name = stock.get('name', 'N/A')
+                category = stock.get('category', 'N/A')
+                print(f"{symbol:<10} {name:<30} {category:<15}")
         else:
             msg = result.get('message', '未知错误') if result else '查询失败'
             print(f"❌ {msg}")
-            
+    
     def help(self):
         """
         显示帮助信息
@@ -1265,8 +1427,9 @@ class TradingCLI:
 🔍 查询:
   a              账户        p              持仓
   o              订单        q  AAPL        报价
-  i  AAPL        详情        an AAPL        技术分析
+  i  AAPL        详情        an AAPL        技术分析(自动AI)
   ti AAPL        指标解释    ti AAPL 3M 1day 自定义周期
+  hot            热门股票    hot US 20       美股热门(20个)
 
 📊 交易:
   b AAPL 10      市价买      b AAPL 10 175  限价买
@@ -1274,8 +1437,7 @@ class TradingCLI:
   x 123          撤单
 
 📈 数据:
-  hi AAPL        历史数据    k  AAPL        K线图
-  k  AAPL 1M     月K线图     k  AAPL 3M v   带成交量
+  hi AAPL        历史数据
 
 🤖 AI分析:
   ai AAPL        AI技术分析⭐  (需要Ollama)
@@ -1291,7 +1453,6 @@ class TradingCLI:
   • AI分析需要先安装Ollama: brew install ollama
   • 启动Ollama服务: ollama serve
   • 拉取模型: ollama pull deepseek-v3.1:671b-cloud
-  • K线图支持任意周期: k AAPL 1W/1M/3M/1Y
         """)
         print("=" * 70 + "\n")
 
@@ -1375,12 +1536,18 @@ def main():
             
             elif cmd in ['analyze', 'an']:
                 if len(args) < 1:
-                    print("❌ 用法: an <symbol> [duration] [bar_size]")
+                    print("❌ 用法: an <symbol> [duration] [bar_size] [model]")
+                    print("   示例: an AAPL")
+                    print("   示例: an AAPL 3M 1day")
+                    print("   示例: an AAPL 3M 1day deepseek-v3.1:671b-cloud")
+                    print("   注意: 后端会自动检测 Ollama，如果可用则自动执行AI分析")
                 else:
                     symbol = args[0]
                     duration = args[1] if len(args) > 1 else '3 M'
                     bar_size = args[2] if len(args) > 2 else '1 day'
-                    cli.analyze(symbol, duration, bar_size)
+                    model = args[3] if len(args) > 3 else 'deepseek-v3.1:671b-cloud'
+                    
+                    cli.analyze(symbol, duration, bar_size, model)
 
             elif cmd in ['ti', 'ti-info', 'indicators']:
                 if len(args) < 1:
@@ -1400,17 +1567,11 @@ def main():
                     bar_size = args[2] if len(args) > 2 else '5 mins'
                     cli.history(symbol, duration, bar_size)
             
-            elif cmd in ['kline', 'k', 'chart']:
-                if len(args) < 1:
-                    print("❌ 用法: k <symbol> [duration] [bar_size] [volume]")
-                else:
-                    symbol = args[0]
-                    duration = args[1] if len(args) > 1 else '1 M'
-                    bar_size = args[2] if len(args) > 2 else '1 day'
-                    # 检查是否有 volume 参数
-                    show_volume = len(args) > 3 and args[3].lower() in ['v', 'vol', 'volume']
-                    cli.kline(symbol, duration, bar_size, show_volume)
-                
+            elif cmd in ['hot', 'hot-stocks']:
+                market = args[0] if len(args) > 0 else 'US'
+                limit = int(args[1]) if len(args) > 1 else 20
+                cli.hot_stocks(market, limit)
+            
             # 交易命令
             elif cmd in ['buy', 'b']:
                 if len(args) < 2:

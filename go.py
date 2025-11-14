@@ -7,18 +7,30 @@
 提供账户信息、下单、撤单、持仓查询等HTTP接口
 """
 
+# 标准库导入
 import logging
-import os
-import time
 import threading
+import time
 from datetime import datetime
+
+# 第三方库导入
+import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from ibapi.client import EClient
-from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 from ibapi.order import Order
-import requests
+from ibapi.wrapper import EWrapper
+
+# 技术指标模块导入
+from indicators import (
+    calculate_ma, calculate_rsi, calculate_bollinger, calculate_macd,
+    calculate_volume, calculate_price_change, calculate_volatility,
+    calculate_support_resistance, calculate_kdj, calculate_atr,
+    calculate_williams_r, calculate_obv, analyze_trend_strength,
+    calculate_ichimoku_cloud, calculate_fibonacci_retracement,
+    calculate_ml_predictions, calculate_chanlun_analysis, get_trend
+)
 
 # 配置日志
 logging.basicConfig(
@@ -39,8 +51,7 @@ gateway = None
 class IBGateway(EWrapper, EClient):
     """
     Interactive Brokers 交易网关
-    继承EWrapper处理回调，继承
-    发送请求
+    继承EWrapper处理回调，继承EClient发送请求
     """
     
     def __init__(self):
@@ -927,128 +938,80 @@ class IBGateway(EWrapper, EClient):
         }
         
         # 1. 移动平均线 (MA)
-        if len(closes) >= 5:
-            result['ma5'] = float(np.mean(closes[-5:]))
-        if len(closes) >= 10:
-            result['ma10'] = float(np.mean(closes[-10:]))
-        if len(closes) >= 20:
-            result['ma20'] = float(np.mean(closes[-20:]))
-        if len(closes) >= 50:
-            result['ma50'] = float(np.mean(closes[-50:]))
+        ma_data = calculate_ma(closes)
+        result.update(ma_data)
             
         # 2. RSI (相对强弱指标)
-        if len(closes) >= 15:
-            period = 14
-            deltas = np.diff(closes)
-            gains = np.where(deltas > 0, deltas, 0)
-            losses = np.where(deltas < 0, -deltas, 0)
-            
-            avg_gain = np.mean(gains[-period:])
-            avg_loss = np.mean(losses[-period:])
-            
-            if avg_loss != 0:
-                rs = avg_gain / avg_loss
-                result['rsi'] = float(100 - (100 / (1 + rs)))
-            else:
-                result['rsi'] = 100.0
+        rsi_data = calculate_rsi(closes)
+        result.update(rsi_data)
                 
         # 3. 布林带 (Bollinger Bands)
-        if len(closes) >= 20:
-            period = 20
-            ma = np.mean(closes[-period:])
-            std = np.std(closes[-period:])
-            result['bb_upper'] = float(ma + 2 * std)
-            result['bb_middle'] = float(ma)
-            result['bb_lower'] = float(ma - 2 * std)
+        bb_data = calculate_bollinger(closes)
+        result.update(bb_data)
             
         # 4. MACD
-        if len(closes) >= 26:
-            # 计算EMA
-            def ema(data, period):
-                alpha = 2 / (period + 1)
-                ema_vals = [data[0]]
-                for price in data[1:]:
-                    ema_vals.append(alpha * price + (1 - alpha) * ema_vals[-1])
-                return ema_vals[-1]
-            
-            ema12 = ema(closes, 12)
-            ema26 = ema(closes, 26)
-            macd_line = ema12 - ema26
-            
-            # 计算信号线 (MACD的9日EMA)
-            if len(closes) >= 35:
-                macd_values = []
-                for i in range(26, len(closes)):
-                    e12 = ema(closes[:i+1], 12)
-                    e26 = ema(closes[:i+1], 26)
-                    macd_values.append(e12 - e26)
-                
-                if len(macd_values) >= 9:
-                    signal_line = ema(np.array(macd_values), 9)
-                    result['macd'] = float(macd_line)
-                    result['macd_signal'] = float(signal_line)
-                    result['macd_histogram'] = float(macd_line - signal_line)
+        macd_data = calculate_macd(closes)
+        result.update(macd_data)
                     
         # 5. 成交量分析
-        if len(volumes) >= 20:
-            result['avg_volume_20'] = float(np.mean(volumes[-20:]))
-            result['current_volume'] = float(volumes[-1])
-            avg_vol = np.mean(volumes[-20:])
-            result['volume_ratio'] = float(volumes[-1] / avg_vol) if avg_vol > 0 else 0.0
+        volume_data = calculate_volume(volumes)
+        result.update(volume_data)
             
         # 6. 价格变化
-        if len(closes) >= 2:
-            result['price_change'] = float(closes[-1] - closes[-2])
-            result['price_change_pct'] = float(((closes[-1] - closes[-2]) / closes[-2] * 100)) if closes[-2] != 0 else 0.0
+        price_change_data = calculate_price_change(closes)
+        result.update(price_change_data)
             
         # 7. 波动率
-        if len(closes) >= 20:
-            returns = np.diff(closes) / closes[:-1]
-            result['volatility_20'] = float(np.std(returns[-20:]) * 100)
+        volatility_data = calculate_volatility(closes)
+        result.update(volatility_data)
             
         # 8. 支撑位和压力位
-        support_resistance = self._calculate_support_resistance(closes, highs, lows)
+        support_resistance = calculate_support_resistance(closes, highs, lows)
         result.update(support_resistance)
         
         # 9. KDJ指标（随机指标）
         if len(closes) >= 9:
-            kdj = self._calculate_kdj(closes, highs, lows)
+            kdj = calculate_kdj(closes, highs, lows)
             result.update(kdj)
         
         # 10. ATR（平均真实波幅）
         if len(closes) >= 14:
-            atr = self._calculate_atr(closes, highs, lows)
+            atr = calculate_atr(closes, highs, lows)
             result['atr'] = atr
             result['atr_percent'] = float((atr / closes[-1]) * 100)
         
         # 11. 威廉指标（Williams %R）
         if len(closes) >= 14:
-            wr = self._calculate_williams_r(closes, highs, lows)
+            wr = calculate_williams_r(closes, highs, lows)
             result['williams_r'] = wr
         
         # 12. OBV（能量潮指标）
         if len(volumes) >= 20:
-            obv = self._calculate_obv(closes, volumes)
+            obv = calculate_obv(closes, volumes)
             result['obv_current'] = float(obv[-1]) if len(obv) > 0 else 0.0
-            result['obv_trend'] = self._get_trend(obv[-10:]) if len(obv) >= 10 else 'neutral'
+            result['obv_trend'] = get_trend(obv[-10:]) if len(obv) >= 10 else 'neutral'
         
         # 13. 趋势强度
-        trend_info = self._analyze_trend_strength(closes, highs, lows)
+        trend_info = analyze_trend_strength(closes, highs, lows)
         result.update(trend_info)
 
         # 14. Ichimoku云图指标
-        ichimoku_data = self._calculate_ichimoku_cloud(highs, lows, closes)
+        ichimoku_data = calculate_ichimoku_cloud(highs, lows, closes)
         result.update(ichimoku_data)
 
         # 15. 斐波那契回撤位
-        fibonacci_levels = self._calculate_fibonacci_retracement(highs, lows)
+        fibonacci_levels = calculate_fibonacci_retracement(highs, lows)
         result.update(fibonacci_levels)
 
         # 16. 机器学习预测模型
-        ml_predictions = self._calculate_ml_predictions(closes, highs, lows, volumes)
+        ml_predictions = calculate_ml_predictions(closes, highs, lows, volumes)
         result.update(ml_predictions)
 
-        # 17. IBKR基本面数据
+        # 17. 缠论分析
+        chanlun_data = calculate_chanlun_analysis(closes, highs, lows, volumes)
+        result.update(chanlun_data)
+
+        # 18. IBKR基本面数据
         try:
             fundamental_data = self.get_fundamental_data(symbol, 'ReportSnapshot')
             if fundamental_data:
@@ -1060,441 +1023,6 @@ class IBGateway(EWrapper, EClient):
             logger.warning(f"获取基本面数据异常: {symbol}, 错误: {e}")
             # 基本面数据获取失败不影响技术指标返回
             
-        return result
-
-    def _calculate_ml_predictions(self, closes, highs, lows, volumes):
-        """
-        使用简单的机器学习模型进行趋势预测
-        """
-        import numpy as np
-        from sklearn.linear_model import LinearRegression
-        from sklearn.preprocessing import StandardScaler
-        
-        result = {}
-        
-        # 确保有足够的数据点
-        if len(closes) < 10:
-            return result
-            
-        # 准备特征数据
-        # 特征1: 过去5天的价格变化率
-        price_changes = np.diff(closes) / closes[:-1]
-        recent_changes = price_changes[-5:] if len(price_changes) >= 5 else price_changes
-        
-        # 特征2: 过去5天的成交量变化率
-        volume_changes = np.diff(volumes) / (volumes[:-1] + 1e-8)  # 避免除以零
-        recent_volume_changes = volume_changes[-5:] if len(volume_changes) >= 5 else volume_changes
-        
-        # 特征3: 当前价格相对于近期高点和低点的位置
-        recent_high = np.max(highs[-10:])
-        recent_low = np.min(lows[-10:])
-        price_position = (closes[-1] - recent_low) / (recent_high - recent_low + 1e-8)
-        
-        # 特征4: 波动率
-        volatility = np.std(price_changes[-10:]) if len(price_changes) >= 10 else 0
-        
-        # 创建特征向量
-        features = np.concatenate([recent_changes, recent_volume_changes])
-        features = np.append(features, [price_position, volatility])
-        
-        # 简单的线性回归预测未来1天的价格变化
-        # 使用过去10天的数据来训练模型
-        if len(closes) >= 10:
-            # 创建训练数据
-            X = []
-            y = []
-            
-            # 使用过去几天的数据来创建训练样本
-            for i in range(5, len(closes)):
-                # 特征：过去5天的价格变化和成交量变化
-                pc = np.diff(closes[max(0, i-5):i]) / closes[max(0, i-5):i-1] if i > 1 else [0]
-                vc = np.diff(volumes[max(0, i-5):i]) / (volumes[max(0, i-5):i-1] + 1e-8) if i > 1 else [0]
-                
-                # 填充到固定长度
-                pc = np.pad(pc, (max(0, 5-len(pc)), 0), 'constant')
-                vc = np.pad(vc, (max(0, 5-len(vc)), 0), 'constant')
-                
-                # 目标：下一天的价格变化率
-                if i < len(closes) - 1:
-                    target = (closes[i+1] - closes[i]) / closes[i]
-                    X.append(np.concatenate([pc, vc]))
-                    y.append(target)
-            
-            if len(X) > 2:
-                # 训练模型
-                X = np.array(X)
-                y = np.array(y)
-                
-                # 标准化特征
-                scaler = StandardScaler()
-                X_scaled = scaler.fit_transform(X)
-                
-                # 训练线性回归模型
-                model = LinearRegression()
-                model.fit(X_scaled, y)
-                
-                # 预测
-                current_features = np.array(features[:10]).reshape(1, -1)
-                current_features_scaled = scaler.transform(current_features)
-                prediction = model.predict(current_features_scaled)[0]
-                
-                result['ml_prediction'] = float(prediction)
-                result['ml_confidence'] = float(np.abs(prediction) * 100)  # 简单的置信度计算
-                
-                # 预测方向
-                if prediction > 0.01:
-                    result['ml_trend'] = 'up'
-                elif prediction < -0.01:
-                    result['ml_trend'] = 'down'
-                else:
-                    result['ml_trend'] = 'sideways'
-                    
-        return result
-
-    def _calculate_ichimoku_cloud(self, highs, lows, closes):
-        """
-        计算Ichimoku云图指标
-        """
-        import numpy as np
-        
-        result = {}
-        
-        # 确保有足够的数据点
-        if len(closes) < 52:
-            return result
-            
-        # 转换线 (Tenkan-sen) - 9日周期 (高+低)/2
-        period_9 = 9
-        tenkan_sen = (np.max(highs[-period_9:]) + np.min(lows[-period_9:])) / 2
-        result['ichimoku_tenkan_sen'] = float(tenkan_sen)
-        
-        # 基准线 (Kijun-sen) - 26日周期 (高+低)/2
-        period_26 = 26
-        if len(closes) >= period_26:
-            kijun_sen = (np.max(highs[-period_26:]) + np.min(lows[-period_26:])) / 2
-            result['ichimoku_kijun_sen'] = float(kijun_sen)
-            
-            # 先行跨度A (Senkou Span A) - (转换线+基准线)/2，向前推26日
-            senkou_span_a = (tenkan_sen + kijun_sen) / 2
-            result['ichimoku_senkou_span_a'] = float(senkou_span_a)
-            
-        # 先行跨度B (Senkou Span B) - 52日周期 (高+低)/2，向前推26日
-        period_52 = 52
-        if len(closes) >= period_52:
-            senkou_span_b = (np.max(highs[-period_52:]) + np.min(lows[-period_52:])) / 2
-            result['ichimoku_senkou_span_b'] = float(senkou_span_b)
-            
-        # 迟行跨度 (Chikou Span) - 当前收盘价，向后推26日
-        if len(closes) >= period_26:
-            result['ichimoku_chikou_span'] = float(closes[-period_26])
-            
-        return result
-
-    def _calculate_fibonacci_retracement(self, highs, lows):
-        """
-        计算斐波那契回撤位
-        """
-        import numpy as np
-        
-        result = {}
-        
-        # 确保有足够的数据点
-        if len(highs) < 2 or len(lows) < 2:
-            return result
-            
-        # 找到最近的高点和低点
-        recent_high = float(np.max(highs[-20:]))
-        recent_low = float(np.min(lows[-20:]))
-        
-        # 计算价格范围
-        price_range = recent_high - recent_low
-        
-        # 斐波那契回撤水平 (23.6%, 38.2%, 50%, 61.8%, 78.6%)
-        fib_levels = {
-            'fib_23.6': recent_high - (price_range * 0.236),
-            'fib_38.2': recent_high - (price_range * 0.382),
-            'fib_50.0': recent_high - (price_range * 0.5),
-            'fib_61.8': recent_high - (price_range * 0.618),
-            'fib_78.6': recent_high - (price_range * 0.786)
-        }
-        
-        # 转换为浮点数
-        for key, value in fib_levels.items():
-            result[key] = float(value)
-            
-        # 添加最近高低点信息
-        result['fib_recent_high'] = recent_high
-        result['fib_recent_low'] = recent_low
-        
-        return result
-
-    def _calculate_support_resistance(self, closes, highs, lows):
-        """
-        计算支撑位和压力位
-        使用多种方法：pivot点、历史高低点、聚类分析
-        """
-        import numpy as np
-        
-        result = {}
-        current_price = float(closes[-1])
-        
-        # 方法1: Pivot Points (枢轴点)
-        if len(closes) >= 2:
-            high = float(highs[-2])
-            low = float(lows[-2])
-            close = float(closes[-2])
-            
-            pivot = (high + low + close) / 3
-            r1 = 2 * pivot - low
-            r2 = pivot + (high - low)
-            r3 = high + 2 * (pivot - low)
-            s1 = 2 * pivot - high
-            s2 = pivot - (high - low)
-            s3 = low - 2 * (high - pivot)
-            
-            result['pivot'] = float(pivot)
-            result['pivot_r1'] = float(r1)
-            result['pivot_r2'] = float(r2)
-            result['pivot_r3'] = float(r3)
-            result['pivot_s1'] = float(s1)
-            result['pivot_s2'] = float(s2)
-            result['pivot_s3'] = float(s3)
-        
-        # 方法2: 最近N日的高低点
-        if len(closes) >= 20:
-            # 最近20日高低点
-            recent_high = float(np.max(highs[-20:]))
-            recent_low = float(np.min(lows[-20:]))
-            
-            # 最近50日高低点（如果有足够数据）
-            if len(closes) >= 50:
-                high_50 = float(np.max(highs[-50:]))
-                low_50 = float(np.min(lows[-50:]))
-                result['resistance_50d_high'] = high_50
-                result['support_50d_low'] = low_50
-            
-            result['resistance_20d_high'] = recent_high
-            result['support_20d_low'] = recent_low
-        
-        # 方法3: 关键价格聚类（找出价格经常触及的区域）
-        if len(closes) >= 30:
-            # 合并所有价格点
-            all_prices = np.concatenate([highs[-30:], lows[-30:], closes[-30:]])
-            
-            # 使用简单的价格分组来找关键位
-            price_range = np.max(all_prices) - np.min(all_prices)
-            if price_range > 0:
-                # 将价格分成若干区间，找出触及次数最多的区间
-                num_bins = 10
-                hist, bin_edges = np.histogram(all_prices, bins=num_bins)
-                
-                # 找出触及次数最多的前几个区间
-                top_indices = np.argsort(hist)[-3:]  # 前3个最常触及的区间
-                key_levels = []
-                
-                for idx in top_indices:
-                    if hist[idx] > 2:  # 至少触及3次
-                        level = float((bin_edges[idx] + bin_edges[idx + 1]) / 2)
-                        key_levels.append(level)
-                
-                # 根据当前价格分类为支撑或压力
-                resistances = [lvl for lvl in key_levels if lvl > current_price]
-                supports = [lvl for lvl in key_levels if lvl < current_price]
-                
-                if resistances:
-                    resistances.sort()
-                    for i, r in enumerate(resistances[:2], 1):  # 最多2个
-                        result[f'key_resistance_{i}'] = float(r)
-                
-                if supports:
-                    supports.sort(reverse=True)
-                    for i, s in enumerate(supports[:2], 1):  # 最多2个
-                        result[f'key_support_{i}'] = float(s)
-        
-        # 方法4: 整数关口（心理价位）
-        # 找出最近的整数关口（如100, 150, 200等）
-        if current_price > 10:
-            # 大于10的股票，找5的倍数或10的倍数
-            if current_price > 50:
-                step = 10
-            else:
-                step = 5
-                
-            lower_round = float(np.floor(current_price / step) * step)
-            upper_round = float(np.ceil(current_price / step) * step)
-            
-            if lower_round != current_price:
-                result['psychological_support'] = lower_round
-            if upper_round != current_price:
-                result['psychological_resistance'] = upper_round
-        
-        return result
-    
-    def _calculate_kdj(self, closes, highs, lows, n=9):
-        """
-        计算KDJ指标（随机指标）
-        """
-        import numpy as np
-        
-        # 计算RSV（未成熟随机值）
-        period = min(n, len(closes))
-        lowest_low = float(np.min(lows[-period:]))
-        highest_high = float(np.max(highs[-period:]))
-        
-        if highest_high == lowest_low:
-            rsv = 50.0
-        else:
-            rsv = ((closes[-1] - lowest_low) / (highest_high - lowest_low)) * 100
-        
-        # 简化计算：使用最近的RSV
-        # 完整版需要历史K、D值，这里使用简化版本
-        k = float(rsv)
-        d = float((2 * k + rsv) / 3)
-        j = float(3 * k - 2 * d)
-        
-        return {
-            'kdj_k': k,
-            'kdj_d': d,
-            'kdj_j': j
-        }
-    
-    def _calculate_atr(self, closes, highs, lows, period=14):
-        """
-        计算ATR（平均真实波幅）
-        """
-        import numpy as np
-        
-        # 计算真实波幅TR
-        tr_list = []
-        for i in range(1, min(period + 1, len(closes))):
-            high_low = highs[-i] - lows[-i]
-            high_close = abs(highs[-i] - closes[-i-1])
-            low_close = abs(lows[-i] - closes[-i-1])
-            tr = max(high_low, high_close, low_close)
-            tr_list.append(tr)
-        
-        atr = float(np.mean(tr_list))
-        return atr
-    
-    def _calculate_williams_r(self, closes, highs, lows, period=14):
-        """
-        计算威廉指标（Williams %R）
-        """
-        import numpy as np
-        
-        p = min(period, len(closes))
-        highest_high = float(np.max(highs[-p:]))
-        lowest_low = float(np.min(lows[-p:]))
-        
-        if highest_high == lowest_low:
-            return -50.0
-        
-        wr = ((highest_high - closes[-1]) / (highest_high - lowest_low)) * -100
-        return float(wr)
-    
-    def _calculate_obv(self, closes, volumes):
-        """
-        计算OBV（能量潮指标）
-        """
-        import numpy as np
-        
-        obv = [0]
-        for i in range(1, len(closes)):
-            if closes[i] > closes[i-1]:
-                obv.append(obv[-1] + volumes[i])
-            elif closes[i] < closes[i-1]:
-                obv.append(obv[-1] - volumes[i])
-            else:
-                obv.append(obv[-1])
-        
-        return np.array(obv)
-    
-    def _get_trend(self, data):
-        """
-        判断数据趋势方向
-        """
-        import numpy as np
-        
-        if len(data) < 3:
-            return 'neutral'
-        
-        # 简单线性回归判断趋势
-        x = np.arange(len(data))
-        slope = np.polyfit(x, data, 1)[0]
-        
-        if slope > np.std(data) * 0.1:
-            return 'up'
-        elif slope < -np.std(data) * 0.1:
-            return 'down'
-        else:
-            return 'neutral'
-    
-    def _analyze_trend_strength(self, closes, highs, lows):
-        """
-        分析趋势强度
-        """
-        import numpy as np
-        
-        result = {}
-        
-        # 1. ADX简化版（趋势强度指标）
-        if len(closes) >= 14:
-            # 计算DM+ 和 DM-
-            dm_plus = []
-            dm_minus = []
-            
-            for i in range(1, min(14, len(closes))):
-                high_diff = highs[-i] - highs[-i-1]
-                low_diff = lows[-i-1] - lows[-i]
-                
-                if high_diff > low_diff and high_diff > 0:
-                    dm_plus.append(high_diff)
-                else:
-                    dm_plus.append(0)
-                
-                if low_diff > high_diff and low_diff > 0:
-                    dm_minus.append(low_diff)
-                else:
-                    dm_minus.append(0)
-            
-            avg_dm_plus = np.mean(dm_plus) if dm_plus else 0
-            avg_dm_minus = np.mean(dm_minus) if dm_minus else 0
-            
-            # 简化的趋势强度
-            total_dm = avg_dm_plus + avg_dm_minus
-            if total_dm > 0:
-                trend_strength = float((abs(avg_dm_plus - avg_dm_minus) / total_dm) * 100)
-            else:
-                trend_strength = 0.0
-            
-            result['trend_strength'] = trend_strength
-            
-            if avg_dm_plus > avg_dm_minus:
-                result['trend_direction'] = 'up'
-            elif avg_dm_minus > avg_dm_plus:
-                result['trend_direction'] = 'down'
-            else:
-                result['trend_direction'] = 'neutral'
-        
-        # 2. 连续上涨/下跌天数
-        consecutive_up = 0
-        consecutive_down = 0
-        
-        for i in range(1, min(10, len(closes))):
-            if closes[-i] > closes[-i-1]:
-                consecutive_up += 1
-                if consecutive_down > 0:
-                    break
-            elif closes[-i] < closes[-i-1]:
-                consecutive_down += 1
-                if consecutive_up > 0:
-                    break
-            else:
-                break
-        
-        result['consecutive_up_days'] = int(consecutive_up)
-        result['consecutive_down_days'] = int(consecutive_down)
-        
         return result
         
     def generate_signals(self, indicators: dict):
@@ -2391,78 +1919,40 @@ def get_fundamental(symbol):
         }), 404
 
 
-@app.route('/api/analyze/<symbol>', methods=['GET'])
-def analyze_stock(symbol):
+def _check_ollama_available():
     """
-    技术分析 - 计算技术指标并生成买卖信号
-    查询参数:
-    - duration: 数据周期 (默认: '1 M')
-    - bar_size: K线周期 (默认: '1 day')
+    检查 Ollama 是否可用
     """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    duration = request.args.get('duration', '1 M')
-    bar_size = request.args.get('bar_size', '1 day')
-    
-    logger.info(f"技术分析: {symbol}, {duration}, {bar_size}")
-    
-    # 计算技术指标
-    indicators = gateway.calculate_technical_indicators(symbol.upper(), duration, bar_size)
-    
-    if not indicators:
-        return jsonify({
-            'success': False,
-            'message': '数据不足，无法计算技术指标'
-        }), 404
-    
-    # 生成买卖信号
-    signals = gateway.generate_signals(indicators)
-    
-    return jsonify({
-        'success': True,
-        'indicators': indicators,
-        'signals': signals
-    })
+    try:
+        import ollama
+        import requests
+        
+        # 先尝试使用 requests 快速检查服务是否运行
+        try:
+            response = requests.get('http://localhost:11434/api/tags', timeout=2)
+            if response.status_code == 200:
+                # 服务运行中，尝试验证 ollama 模块是否可用
+                try:
+                    client = ollama.Client(host='http://localhost:11434')
+                    # 尝试列出模型来验证服务是否可用
+                    client.list()
+                    return True
+                except Exception:
+                    # ollama 模块可能有问题，但服务在运行
+                    return True
+            return False
+        except Exception:
+            # 服务不可用
+            return False
+    except ImportError:
+        # ollama 模块未安装
+        return False
 
 
-@app.route('/api/ai-analyze/<symbol>', methods=['GET'])
-def ai_analyze_stock(symbol):
+def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-v3.1:671b-cloud'):
     """
-    AI技术分析 - 使用Ollama分析技术指标并给出专业建议
-    查询参数:
-    - duration: 数据周期 (默认: '3 M')
-    - bar_size: K线周期 (默认: '1 day')
-    - model: Ollama模型 (默认: 'deepseek-v3.1:671b-cloud')
+    执行AI分析的辅助函数
     """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    duration = request.args.get('duration', '3 M')
-    bar_size = request.args.get('bar_size', '1 day')
-    model = request.args.get('model', 'deepseek-v3.1:671b-cloud')
-    
-    logger.info(f"AI分析: {symbol}, {duration}, {bar_size}, model={model}")
-    
-    # 计算技术指标
-    indicators = gateway.calculate_technical_indicators(symbol.upper(), duration, bar_size)
-    
-    if not indicators:
-        return jsonify({
-            'success': False,
-            'message': '数据不足，无法计算技术指标'
-        }), 404
-    
-    # 生成买卖信号
-    signals = gateway.generate_signals(indicators)
-    
-    # 使用AI分析
     try:
         import ollama
         
@@ -2777,28 +2267,171 @@ def ai_analyze_stock(symbol):
             }]
         )
         
-        ai_analysis = response['message']['content']
-        
-        return jsonify({
-            'success': True,
-            'symbol': symbol.upper(),
-            'indicators': indicators,
-            'signals': signals,
-            'ai_analysis': ai_analysis,
-            'model': model
-        })
+        return response['message']['content']
         
     except Exception as ai_error:
         logger.error(f"AI分析失败: {ai_error}")
-        # AI失败时仍返回技术指标
+        return f'AI分析不可用: {str(ai_error)}\n\n请确保Ollama已安装并运行: ollama serve'
+
+
+@app.route('/api/analyze/<symbol>', methods=['GET'])
+def analyze_stock(symbol):
+    """
+    技术分析 - 计算技术指标并生成买卖信号
+    自动检测 Ollama 是否可用，如果可用则自动执行AI分析
+    
+    查询参数:
+    - duration: 数据周期 (默认: '3 M')
+    - bar_size: K线周期 (默认: '1 day')
+    - model: AI模型名称 (默认: 'deepseek-v3.1:671b-cloud')，仅在Ollama可用时使用
+    """
+    if not gateway or not gateway.connected:
         return jsonify({
-            'success': True,
-            'symbol': symbol.upper(),
-            'indicators': indicators,
-            'signals': signals,
-            'ai_analysis': f'AI分析不可用: {str(ai_error)}\n\n请确保Ollama已安装并运行: ollama serve',
-            'model': model
-        })
+            'success': False,
+            'message': '未连接到网关'
+        }), 400
+    
+    duration = request.args.get('duration', '3 M')
+    bar_size = request.args.get('bar_size', '1 day')
+    model = request.args.get('model', 'deepseek-v3.1:671b-cloud')
+    
+    logger.info(f"技术分析: {symbol}, {duration}, {bar_size}")
+    
+    # 计算技术指标
+    indicators = gateway.calculate_technical_indicators(symbol.upper(), duration, bar_size)
+    
+    if not indicators:
+        return jsonify({
+            'success': False,
+            'message': '数据不足，无法计算技术指标'
+        }), 404
+    
+    # 生成买卖信号
+    signals = gateway.generate_signals(indicators)
+    
+    # 构建返回数据
+    result = {
+        'success': True,
+        'indicators': indicators,
+        'signals': signals
+    }
+    
+    # 自动检测 Ollama 是否可用，如果可用则执行AI分析
+    if _check_ollama_available():
+        logger.info(f"检测到 Ollama 可用，开始AI分析...")
+        try:
+            ai_analysis = _perform_ai_analysis(symbol, indicators, signals, duration, model)
+            result['ai_analysis'] = ai_analysis
+            result['model'] = model
+            result['ai_available'] = True
+        except Exception as e:
+            logger.warning(f"AI分析执行失败: {e}")
+            result['ai_available'] = False
+            result['ai_error'] = str(e)
+    else:
+        logger.info("Ollama 不可用，跳过AI分析")
+        result['ai_available'] = False
+    
+    return jsonify(result)
+
+
+@app.route('/api/ai-analyze/<symbol>', methods=['GET'])
+def ai_analyze_stock(symbol):
+    """
+    AI技术分析 - 兼容接口，重定向到 /api/analyze
+    查询参数:
+    - duration: 数据周期 (默认: '3 M')
+    - bar_size: K线周期 (默认: '1 day')
+    - model: Ollama模型 (默认: 'deepseek-v3.1:671b-cloud')
+    
+    注意: 此接口已合并到 /api/analyze，后端会自动检测 Ollama 并执行AI分析
+    """
+    # 重定向到统一的 analyze 接口
+    return analyze_stock(symbol)
+
+
+@app.route('/api/hot-stocks', methods=['GET'])
+def get_hot_stocks():
+    """
+    获取热门股票代码列表
+    查询参数:
+    - market: 市场类型 (默认: 'US')，可选: 'US', 'HK', 'CN'
+    - limit: 返回数量限制 (默认: 20)
+    """
+    market = request.args.get('market', 'US').upper()
+    limit = int(request.args.get('limit', 20))
+    
+    # 定义热门股票列表
+    hot_stocks = {
+        'US': [
+            {'symbol': 'AAPL', 'name': 'Apple Inc.', 'category': '科技'},
+            {'symbol': 'MSFT', 'name': 'Microsoft Corporation', 'category': '科技'},
+            {'symbol': 'GOOGL', 'name': 'Alphabet Inc.', 'category': '科技'},
+            {'symbol': 'AMZN', 'name': 'Amazon.com Inc.', 'category': '电商'},
+            {'symbol': 'NVDA', 'name': 'NVIDIA Corporation', 'category': '半导体'},
+            {'symbol': 'META', 'name': 'Meta Platforms Inc.', 'category': '科技'},
+            {'symbol': 'TSLA', 'name': 'Tesla Inc.', 'category': '汽车'},
+            {'symbol': 'BRK.B', 'name': 'Berkshire Hathaway Inc.', 'category': '金融'},
+            {'symbol': 'V', 'name': 'Visa Inc.', 'category': '金融'},
+            {'symbol': 'JNJ', 'name': 'Johnson & Johnson', 'category': '医疗'},
+            {'symbol': 'WMT', 'name': 'Walmart Inc.', 'category': '零售'},
+            {'symbol': 'JPM', 'name': 'JPMorgan Chase & Co.', 'category': '金融'},
+            {'symbol': 'MA', 'name': 'Mastercard Inc.', 'category': '金融'},
+            {'symbol': 'PG', 'name': 'Procter & Gamble Co.', 'category': '消费品'},
+            {'symbol': 'UNH', 'name': 'UnitedHealth Group Inc.', 'category': '医疗'},
+            {'symbol': 'HD', 'name': 'The Home Depot Inc.', 'category': '零售'},
+            {'symbol': 'DIS', 'name': 'The Walt Disney Company', 'category': '娱乐'},
+            {'symbol': 'BAC', 'name': 'Bank of America Corp.', 'category': '金融'},
+            {'symbol': 'ADBE', 'name': 'Adobe Inc.', 'category': '科技'},
+            {'symbol': 'NFLX', 'name': 'Netflix Inc.', 'category': '娱乐'},
+            {'symbol': 'CRM', 'name': 'Salesforce.com Inc.', 'category': '科技'},
+            {'symbol': 'PYPL', 'name': 'PayPal Holdings Inc.', 'category': '金融'},
+            {'symbol': 'INTC', 'name': 'Intel Corporation', 'category': '半导体'},
+            {'symbol': 'CMCSA', 'name': 'Comcast Corporation', 'category': '媒体'},
+            {'symbol': 'PFE', 'name': 'Pfizer Inc.', 'category': '医疗'},
+            {'symbol': 'COST', 'name': 'Costco Wholesale Corporation', 'category': '零售'},
+            {'symbol': 'TMO', 'name': 'Thermo Fisher Scientific Inc.', 'category': '医疗'},
+            {'symbol': 'AVGO', 'name': 'Broadcom Inc.', 'category': '半导体'},
+            {'symbol': 'CSCO', 'name': 'Cisco Systems Inc.', 'category': '科技'},
+            {'symbol': 'ABBV', 'name': 'AbbVie Inc.', 'category': '医疗'},
+        ],
+        'HK': [
+            {'symbol': '0700', 'name': '腾讯控股', 'category': '科技'},
+            {'symbol': '0941', 'name': '中国移动', 'category': '电信'},
+            {'symbol': '1299', 'name': '友邦保险', 'category': '保险'},
+            {'symbol': '0388', 'name': '香港交易所', 'category': '金融'},
+            {'symbol': '0005', 'name': '汇丰控股', 'category': '银行'},
+            {'symbol': '2318', 'name': '中国平安', 'category': '保险'},
+            {'symbol': '1398', 'name': '工商银行', 'category': '银行'},
+            {'symbol': '3988', 'name': '中国银行', 'category': '银行'},
+            {'symbol': '9988', 'name': '阿里巴巴-SW', 'category': '电商'},
+            {'symbol': '3690', 'name': '美团-W', 'category': '科技'},
+        ],
+        'CN': [
+            {'symbol': '000001', 'name': '平安银行', 'category': '银行'},
+            {'symbol': '000002', 'name': '万科A', 'category': '地产'},
+            {'symbol': '600000', 'name': '浦发银行', 'category': '银行'},
+            {'symbol': '600036', 'name': '招商银行', 'category': '银行'},
+            {'symbol': '600519', 'name': '贵州茅台', 'category': '消费'},
+            {'symbol': '000858', 'name': '五粮液', 'category': '消费'},
+            {'symbol': '002415', 'name': '海康威视', 'category': '科技'},
+            {'symbol': '300059', 'name': '东方财富', 'category': '金融'},
+            {'symbol': '002594', 'name': '比亚迪', 'category': '汽车'},
+            {'symbol': '300750', 'name': '宁德时代', 'category': '新能源'},
+        ],
+    }
+    
+    stocks = hot_stocks.get(market, hot_stocks['US'])
+    
+    # 限制返回数量
+    result = stocks[:limit] if limit > 0 else stocks
+    
+    return jsonify({
+        'success': True,
+        'market': market,
+        'count': len(result),
+        'stocks': result
+    })
 
 
 @app.route('/', methods=['GET'])
@@ -2825,7 +2458,8 @@ def index():
             'stock_info': 'GET /api/info/<symbol>',
             'fundamental': 'GET /api/fundamental/<symbol>',
             'analyze': 'GET /api/analyze/<symbol>',
-            'ai_analyze': 'GET /api/ai-analyze/<symbol>'
+            'ai_analyze': 'GET /api/ai-analyze/<symbol>',
+            'hot_stocks': 'GET /api/hot-stocks?market=US&limit=20'
         }
     })
 

@@ -1,0 +1,55 @@
+.main-page {
+  max-width: 1400px;
+  margin: 0 auto;
+  background: #fff;
+}
+
+/* 确保整个页面背景为白色 */
+.main-page > * {
+  background: #fff;
+}
+
+/* 固定顶部区域 */
+.main-page .fixed-top {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #fff;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border-bottom: 2px solid #e8e8e8;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* 让 Descriptions 组件列宽根据内容动态调整 */
+.main-page :global(.ant-descriptions-table) {
+  table-layout: auto !important;
+  width: 100%;
+}
+
+.main-page :global(.ant-descriptions-item-label) {
+  white-space: nowrap;
+  width: auto !important;
+}
+
+.main-page :global(.ant-descriptions-item-content) {
+  width: auto !important;
+}
+
+/* 确保 Descriptions 组件背景色为白色 */
+.main-page :global(.ant-descriptions) {
+  background: #fff !important;
+}
+
+.main-page :global(.ant-descriptions-view) {
+  background: #fff !important;
+}
+
+.main-page :global(.ant-descriptions-table) {
+  background: #fff !important;
+}
+
+.main-page :global(.ant-descriptions-item-label),
+.main-page :global(.ant-descriptions-item-content) {
+  background: #fff !important;
+}
