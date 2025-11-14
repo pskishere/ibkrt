@@ -63,8 +63,7 @@ class IBGateway(EWrapper, EClient):
         self.contract_details = {}  # 合约详情
         self.fundamental_data = {}  # 基本面数据
         self.req_id_counter = 1000  # 请求ID计数器
-        self._economic_cache = None  # 经济指标缓存
-        self._economic_cache_time = 0  # 缓存时间戳
+        self._fundamental_errors = {}  # 基本面数据错误跟踪（用于静默处理430错误）
         
         # 线程锁
         self.lock = threading.Lock()
@@ -231,22 +230,34 @@ class IBGateway(EWrapper, EClient):
         """
         接收错误信息
         """
-        super().error(reqId, errorCode, errorString)
-        
         # 忽略信息提示和已知的可忽略错误
         ignore_codes = [
             2104, 2106, 2158,  # 连接信息提示
             10148,  # 订单已在撤销中
             10147,  # 订单已撤销
             2119, 2120,  # 行情数据延迟提示
+            430,  # 指定证券没有基本面数据（正常情况，静默跳过）
         ]
         
-        if errorCode not in ignore_codes:
-            # 订单相关错误特别标注
-            if reqId > 0 and errorCode >= 100:
-                logger.error(f"请求 #{reqId} 错误 [{errorCode}]: {errorString}")
-            else:
-                logger.error(f"[{errorCode}] {errorString}")
+        # 记录基本面数据请求的错误码（用于静默处理）
+        if errorCode == 430 and reqId > 0:
+            with self.lock:
+                self._fundamental_errors[reqId] = errorCode
+            # 430错误完全静默处理，不调用super()也不记录日志
+            return
+        
+        # 对于需要忽略的错误，不调用super()以避免打印日志
+        if errorCode in ignore_codes:
+            return
+        
+        # 其他错误才调用super()和记录日志
+        super().error(reqId, errorCode, errorString)
+        
+        # 订单相关错误特别标注
+        if reqId > 0 and errorCode >= 100:
+            logger.error(f"请求 #{reqId} 错误 [{errorCode}]: {errorString}")
+        else:
+            logger.error(f"[{errorCode}] {errorString}")
                 
     # ==================== 行情数据回调 ====================
     
@@ -730,20 +741,31 @@ class IBGateway(EWrapper, EClient):
         
         while time.time() - start_time < max_wait:
             with self.lock:
+                # 检查是否收到数据
                 if req_id in self.fundamental_data and self.fundamental_data[req_id] is not None:
+                    break
+                # 检查是否是430错误（没有基本面数据），如果是则立即返回
+                if req_id in self._fundamental_errors:
                     break
             time.sleep(0.2)
         
         # 获取数据
         with self.lock:
             data = self.fundamental_data.get(req_id)
+            # 检查是否是430错误（没有基本面数据）
+            is_no_data_error = req_id in self._fundamental_errors
+            if is_no_data_error:
+                # 清除错误记录
+                del self._fundamental_errors[req_id]
             
         if data:
             logger.info(f"基本面数据接收成功: {symbol}")
             # 简单解析XML数据
             return self._parse_fundamental_data(data)
         else:
-            logger.warning(f"基本面数据接收失败: {symbol}")
+            # 如果是430错误（没有基本面数据），静默跳过，不记录警告
+            if not is_no_data_error:
+                logger.warning(f"基本面数据接收失败: {symbol}")
             return None
             
     def _parse_fundamental_data(self, xml_data: str):
@@ -756,12 +778,124 @@ class IBGateway(EWrapper, EClient):
             root = ET.fromstring(xml_data)
             result = {}
             
-            # 提取财务摘要信息
-            for elem in root.iter():
-                if elem.text and elem.text.strip():
-                    result[elem.tag] = elem.text.strip()
-                    
-            return result
+            # 1. 提取公司基本信息 (CoIDs)
+            co_ids = root.find('.//CoIDs')
+            if co_ids is not None:
+                for coid in co_ids.findall('CoID'):
+                    coid_type = coid.get('Type', '')
+                    if coid.text and coid.text.strip():
+                        if coid_type == 'CompanyName':
+                            result['CompanyName'] = coid.text.strip()
+                        elif coid_type == 'CIKNo':
+                            result['CIK'] = coid.text.strip()
+            
+            # 2. 提取公司通用信息 (CoGeneralInfo)
+            co_info = root.find('.//CoGeneralInfo')
+            if co_info is not None:
+                employees = co_info.find('Employees')
+                if employees is not None and employees.text:
+                    result['Employees'] = employees.text.strip()
+                
+                shares_out = co_info.find('SharesOut')
+                if shares_out is not None and shares_out.text:
+                    result['SharesOutstanding'] = shares_out.text.strip()
+            
+            # 3. 提取交易所信息
+            exchange = root.find('.//Exchange')
+            if exchange is not None and exchange.text:
+                result['Exchange'] = exchange.text.strip()
+            
+            # 4. 提取财务比率 (Ratios)
+            ratios = root.find('.//Ratios')
+            if ratios is not None:
+                # 价格和成交量
+                price_group = ratios.find(".//Group[@ID='Price and Volume']")
+                if price_group is not None:
+                    for ratio in price_group.findall('Ratio'):
+                        field_name = ratio.get('FieldName', '')
+                        if ratio.text and ratio.text.strip():
+                            if field_name == 'NPRICE':
+                                result['Price'] = ratio.text.strip()
+                            elif field_name == 'NHIG':
+                                result['52WeekHigh'] = ratio.text.strip()
+                            elif field_name == 'NLOW':
+                                result['52WeekLow'] = ratio.text.strip()
+                            elif field_name == 'VOL10DAVG':
+                                result['AvgVolume10D'] = ratio.text.strip()
+                            elif field_name == 'EV':
+                                result['EnterpriseValue'] = ratio.text.strip()
+                
+                # 利润表数据
+                income_group = ratios.find(".//Group[@ID='Income Statement']")
+                if income_group is not None:
+                    for ratio in income_group.findall('Ratio'):
+                        field_name = ratio.get('FieldName', '')
+                        if ratio.text and ratio.text.strip():
+                            if field_name == 'MKTCAP':
+                                result['MarketCap'] = ratio.text.strip()
+                            elif field_name == 'TTMREV':
+                                result['RevenueTTM'] = ratio.text.strip()
+                            elif field_name == 'TTMEBITD':
+                                result['EBITDATTM'] = ratio.text.strip()
+                            elif field_name == 'TTMNIAC':
+                                result['NetIncomeTTM'] = ratio.text.strip()
+                
+                # 每股数据
+                per_share_group = ratios.find(".//Group[@ID='Per share data']")
+                if per_share_group is not None:
+                    for ratio in per_share_group.findall('Ratio'):
+                        field_name = ratio.get('FieldName', '')
+                        if ratio.text and ratio.text.strip():
+                            if field_name == 'TTMEPSXCLX':
+                                result['EPS'] = ratio.text.strip()
+                            elif field_name == 'TTMREVPS':
+                                result['RevenuePerShare'] = ratio.text.strip()
+                            elif field_name == 'QBVPS':
+                                result['BookValuePerShare'] = ratio.text.strip()
+                            elif field_name == 'QCSHPS':
+                                result['CashPerShare'] = ratio.text.strip()
+                            elif field_name == 'TTMCFSHR':
+                                result['CashFlowPerShare'] = ratio.text.strip()
+                            elif field_name == 'TTMDIVSHR':
+                                result['DividendPerShare'] = ratio.text.strip()
+                
+                # 其他比率
+                other_group = ratios.find(".//Group[@ID='Other Ratios']")
+                if other_group is not None:
+                    for ratio in other_group.findall('Ratio'):
+                        field_name = ratio.get('FieldName', '')
+                        if ratio.text and ratio.text.strip():
+                            if field_name == 'TTMGROSMGN':
+                                result['GrossMargin'] = ratio.text.strip()
+                            elif field_name == 'TTMROEPCT':
+                                result['ROE'] = ratio.text.strip()
+                            elif field_name == 'TTMPR2REV':
+                                result['ProfitMargin'] = ratio.text.strip()
+                            elif field_name == 'PEEXCLXOR':
+                                result['PE'] = ratio.text.strip()
+                            elif field_name == 'PRICE2BK':
+                                result['PriceToBook'] = ratio.text.strip()
+            
+            # 5. 提取预测数据 (ForecastData)
+            forecast = root.find('.//ForecastData')
+            if forecast is not None:
+                target_price = forecast.find(".//Ratio[@FieldName='TargetPrice']/Value")
+                if target_price is not None and target_price.text:
+                    result['TargetPrice'] = target_price.text.strip()
+                
+                consensus = forecast.find(".//Ratio[@FieldName='ConsRecom']/Value")
+                if consensus is not None and consensus.text:
+                    result['ConsensusRecommendation'] = consensus.text.strip()
+                
+                proj_eps = forecast.find(".//Ratio[@FieldName='ProjEPS']/Value")
+                if proj_eps is not None and proj_eps.text:
+                    result['ProjectedEPS'] = proj_eps.text.strip()
+                
+                proj_growth = forecast.find(".//Ratio[@FieldName='ProjLTGrowthRate']/Value")
+                if proj_growth is not None and proj_growth.text:
+                    result['ProjectedGrowthRate'] = proj_growth.text.strip()
+            
+            return result if result else {'raw_xml': xml_data}
         except Exception as e:
             logger.error(f"解析基本面数据失败: {e}")
             return {'raw_xml': xml_data}
@@ -910,18 +1044,21 @@ class IBGateway(EWrapper, EClient):
         fibonacci_levels = self._calculate_fibonacci_retracement(highs, lows)
         result.update(fibonacci_levels)
 
-        # 16. 艾略特波浪预测
-        elliot_wave = self._calculate_elliott_wave(closes)
-        result.update(elliot_wave)
-
-        # 17. 机器学习预测模型
+        # 16. 机器学习预测模型
         ml_predictions = self._calculate_ml_predictions(closes, highs, lows, volumes)
         result.update(ml_predictions)
 
-        # 18. 宏观经济指标
-        macro_indicators = self.get_us_economic_indicators()
-        if macro_indicators:
-            result['macro_indicators'] = macro_indicators
+        # 17. IBKR基本面数据
+        try:
+            fundamental_data = self.get_fundamental_data(symbol, 'ReportSnapshot')
+            if fundamental_data:
+                result['fundamental_data'] = fundamental_data
+                logger.info(f"基本面数据已添加到技术指标: {symbol}")
+            # 如果没有基本面数据（如ETF等），静默跳过，不记录警告
+        except Exception as e:
+            # 只有非预期的异常才记录警告
+            logger.warning(f"获取基本面数据异常: {symbol}, 错误: {e}")
+            # 基本面数据获取失败不影响技术指标返回
             
         return result
 
@@ -1091,168 +1228,6 @@ class IBGateway(EWrapper, EClient):
         
         return result
 
-    def _calculate_elliott_wave(self, closes):
-        """
-        艾略特波浪理论分析（简化版）
-        """
-        import numpy as np
-        
-        result = {}
-        
-        # 确保有足够的数据点
-        if len(closes) < 10:
-            return result
-            
-        # 计算价格变化百分比
-        price_changes = np.diff(closes) / closes[:-1] * 100
-        
-        # 简单的波浪识别（基于最近的价格波动模式）
-        # 这是一个非常简化的实现，实际的艾略特波浪分析要复杂得多
-        
-        # 计算最近5天的波动
-        recent_changes = price_changes[-5:]
-        
-        # 判断趋势方向
-        avg_change = np.mean(recent_changes)
-        
-        if avg_change > 1:
-            result['elliott_wave_trend'] = 'up'
-            result['elliott_wave_strength'] = float(avg_change)
-        elif avg_change < -1:
-            result['elliott_wave_trend'] = 'down'
-            result['elliott_wave_strength'] = float(abs(avg_change))
-        else:
-            result['elliott_wave_trend'] = 'sideways'
-            result['elliott_wave_strength'] = 0.0
-            
-        # 波动性评估
-        volatility = np.std(recent_changes)
-        result['elliott_wave_volatility'] = float(volatility)
-        
-        return result
-
-    def get_us_economic_indicators(self, refresh: bool = False):
-        """
-        获取美国政府发布的核心宏观经济指标（来自FRED）
-        """
-        cache_valid = (
-            self._economic_cache
-            and (time.time() - self._economic_cache_time) < 3600
-            and not refresh
-        )
-
-        if cache_valid:
-            return self._economic_cache
-
-        api_key = os.getenv('FRED_API_KEY')
-        print(api_key)
-        if not api_key:
-            logger.warning("未设置环境变量 FRED_API_KEY，跳过宏观经济指标获取")
-            return self._economic_cache
-
-        indicator_map = {
-            'gdp_real': {
-                'series_id': 'GDPC1',
-                'name': '美国实际GDP（季度）',
-            },
-            'cpi': {
-                'series_id': 'CPIAUCSL',
-                'name': '美国居民消费价格指数（CPI）',
-            },
-            'core_pce': {
-                'series_id': 'PCEPILFE',
-                'name': '美国核心PCE物价指数',
-            },
-            'unemployment_rate': {
-                'series_id': 'UNRATE',
-                'name': '美国失业率',
-            },
-            'nonfarm_payroll': {
-                'series_id': 'PAYEMS',
-                'name': '美国非农就业人数',
-            },
-            'industrial_production': {
-                'series_id': 'INDPRO',
-                'name': '美国工业生产指数',
-            },
-            'retail_sales': {
-                'series_id': 'RSAFS',
-                'name': '美国零售销售额',
-            },
-            'housing_starts': {
-                'series_id': 'HOUST',
-                'name': '美国新屋开工数',
-            },
-            'federal_funds_rate': {
-                'series_id': 'FEDFUNDS',
-                'name': '联邦基金利率',
-            },
-        }
-
-        indicators = {}
-        for key, meta in indicator_map.items():
-            series_data = self._fetch_fred_series(meta['series_id'], api_key)
-            if series_data:
-                indicators[key] = {
-                    'title': meta['name'],
-                    'series_id': meta['series_id'],
-                    'date': series_data['date'],
-                    'value': series_data['value'],
-                    'unit': series_data['unit'],
-                }
-
-        if indicators:
-            self._economic_cache = indicators
-            self._economic_cache_time = time.time()
-        else:
-            logger.warning("FRED经济指标请求失败或返回空数据")
-
-        return self._economic_cache
-
-    def _fetch_fred_series(self, series_id: str, api_key: str, limit: int = 1):
-        """
-        调用FRED接口获取指定经济指标的最新数据
-        """
-        params = {
-            'series_id': series_id,
-            'api_key': api_key,
-            'file_type': 'json',
-            'sort_order': 'desc',
-            'limit': limit,
-        }
-
-        try:
-            response = requests.get(
-                'https://api.stlouisfed.org/fred/series/observations',
-                params=params,
-                timeout=5,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            observations = data.get('observations', [])
-            if not observations:
-                return None
-
-            latest = observations[0]
-            value_str = latest.get('value', '')
-            try:
-                value = float(value_str)
-            except (TypeError, ValueError):
-                value = None
-
-            # 单位信息位于series metadata中，若不存在则返回空字符串
-            unit = data.get('units', '') or ''
-
-            return {
-                'date': latest.get('date'),
-                'value': value,
-                'unit': unit,
-            }
-        except requests.RequestException as exc:
-            logger.error(f"获取FRED指标失败: {series_id}, 错误: {exc}")
-            return None
-    
     def _calculate_support_resistance(self, closes, highs, lows):
         """
         计算支撑位和压力位
@@ -2490,30 +2465,240 @@ def ai_analyze_stock(symbol):
     # 使用AI分析
     try:
         import ollama
-
-        macro_data = indicators.get('macro_indicators', {})
-        if isinstance(macro_data, dict) and macro_data:
-            macro_lines = []
-            for item in macro_data.values():
-                title = item.get('title', '未知指标')
-                value = item.get('value')
-                unit = item.get('unit', '')
-                date = item.get('date', '')
-                if isinstance(value, (int, float)) and value is not None:
-                    value_display = f"{value:.2f}"
-                else:
-                    value_display = str(value)
-                macro_lines.append(f"{title}: {value_display} ({unit}) - 数据日期: {date}")
-            macro_text = "\n".join(macro_lines)
-        else:
-            macro_text = "无"
         
-        # 构建提示词
-        prompt = f"""你是一位专业的股票技术分析师。请基于以下技术指标数据，给出详细的交易分析和建议。
+        # 格式化基本面数据
+        fundamental_data = indicators.get('fundamental_data', {})
+        has_fundamental = (fundamental_data and 
+                          isinstance(fundamental_data, dict) and 
+                          'raw_xml' not in fundamental_data and
+                          len(fundamental_data) > 0)
+        
+        if has_fundamental:
+            # 格式化基本面数据为易读格式
+            fundamental_sections = []
+            
+            # 基本信息
+            if 'CompanyName' in fundamental_data:
+                info_parts = [f"公司名称: {fundamental_data['CompanyName']}"]
+                if 'Exchange' in fundamental_data:
+                    info_parts.append(f"交易所: {fundamental_data['Exchange']}")
+                if 'Employees' in fundamental_data:
+                    info_parts.append(f"员工数: {fundamental_data['Employees']}人")
+                if 'SharesOutstanding' in fundamental_data:
+                    shares = fundamental_data['SharesOutstanding']
+                    try:
+                        shares_val = float(shares)
+                        if shares_val >= 1e9:
+                            shares_str = f"{shares_val/1e9:.2f}B股"
+                        elif shares_val >= 1e6:
+                            shares_str = f"{shares_val/1e6:.2f}M股"
+                        else:
+                            shares_str = f"{int(shares_val):,}股"
+                        info_parts.append(f"流通股数: {shares_str}")
+                    except:
+                        info_parts.append(f"流通股数: {shares}")
+                if info_parts:
+                    fundamental_sections.append("基本信息:\n" + "\n".join([f"   - {p}" for p in info_parts]))
+            
+            # 市值和价格
+            price_parts = []
+            if 'MarketCap' in fundamental_data:
+                try:
+                    mcap = float(fundamental_data['MarketCap'])
+                    if mcap >= 1e9:
+                        price_parts.append(f"市值: ${mcap/1e9:.2f}B")
+                    elif mcap >= 1e6:
+                        price_parts.append(f"市值: ${mcap/1e6:.2f}M")
+                    else:
+                        price_parts.append(f"市值: ${mcap:.2f}")
+                except:
+                    price_parts.append(f"市值: {fundamental_data['MarketCap']}")
+            if 'Price' in fundamental_data:
+                price_parts.append(f"当前价: ${fundamental_data['Price']}")
+            if '52WeekHigh' in fundamental_data and '52WeekLow' in fundamental_data:
+                price_parts.append(f"52周区间: ${fundamental_data['52WeekLow']} - ${fundamental_data['52WeekHigh']}")
+            if price_parts:
+                fundamental_sections.append("市值与价格:\n" + "\n".join([f"   - {p}" for p in price_parts]))
+            
+            # 财务指标
+            financial_parts = []
+            for key, label in [('RevenueTTM', '营收(TTM)'), ('NetIncomeTTM', '净利润(TTM)'), 
+                              ('EBITDATTM', 'EBITDA(TTM)'), ('ProfitMargin', '利润率'), 
+                              ('GrossMargin', '毛利率')]:
+                if key in fundamental_data:
+                    value = fundamental_data[key]
+                    try:
+                        val = float(value)
+                        if 'Margin' in key:
+                            financial_parts.append(f"{label}: {val:.2f}%")
+                        elif val >= 1e9:
+                            financial_parts.append(f"{label}: ${val/1e9:.2f}B")
+                        elif val >= 1e6:
+                            financial_parts.append(f"{label}: ${val/1e6:.2f}M")
+                        else:
+                            financial_parts.append(f"{label}: ${val:.2f}")
+                    except:
+                        financial_parts.append(f"{label}: {value}")
+            if financial_parts:
+                fundamental_sections.append("财务指标:\n" + "\n".join([f"   - {p}" for p in financial_parts]))
+            
+            # 每股数据
+            per_share_parts = []
+            for key, label in [('EPS', '每股收益(EPS)'), ('BookValuePerShare', '每股净资产'), 
+                              ('CashPerShare', '每股现金'), ('DividendPerShare', '每股股息')]:
+                if key in fundamental_data:
+                    value = fundamental_data[key]
+                    try:
+                        val = float(value)
+                        per_share_parts.append(f"{label}: ${val:.2f}")
+                    except:
+                        per_share_parts.append(f"{label}: {value}")
+            if per_share_parts:
+                fundamental_sections.append("每股数据:\n" + "\n".join([f"   - {p}" for p in per_share_parts]))
+            
+            # 估值指标
+            valuation_parts = []
+            for key, label in [('PE', '市盈率(PE)'), ('PriceToBook', '市净率(PB)'), ('ROE', '净资产收益率(ROE)')]:
+                if key in fundamental_data:
+                    value = fundamental_data[key]
+                    try:
+                        val = float(value)
+                        if key == 'ROE':
+                            valuation_parts.append(f"{label}: {val:.2f}%")
+                        else:
+                            valuation_parts.append(f"{label}: {val:.2f}")
+                    except:
+                        valuation_parts.append(f"{label}: {value}")
+            if valuation_parts:
+                fundamental_sections.append("估值指标:\n" + "\n".join([f"   - {p}" for p in valuation_parts]))
+            
+            # 预测数据
+            forecast_parts = []
+            if 'TargetPrice' in fundamental_data:
+                try:
+                    target = float(fundamental_data['TargetPrice'])
+                    forecast_parts.append(f"目标价: ${target:.2f}")
+                except:
+                    forecast_parts.append(f"目标价: {fundamental_data['TargetPrice']}")
+            if 'ConsensusRecommendation' in fundamental_data:
+                try:
+                    consensus = float(fundamental_data['ConsensusRecommendation'])
+                    if consensus <= 1.5:
+                        rec = "强烈买入"
+                    elif consensus <= 2.5:
+                        rec = "买入"
+                    elif consensus <= 3.5:
+                        rec = "持有"
+                    elif consensus <= 4.5:
+                        rec = "卖出"
+                    else:
+                        rec = "强烈卖出"
+                    forecast_parts.append(f"共识评级: {rec} ({consensus:.2f})")
+                except:
+                    forecast_parts.append(f"共识评级: {fundamental_data['ConsensusRecommendation']}")
+            if 'ProjectedEPS' in fundamental_data:
+                try:
+                    proj_eps = float(fundamental_data['ProjectedEPS'])
+                    forecast_parts.append(f"预测EPS: ${proj_eps:.2f}")
+                except:
+                    forecast_parts.append(f"预测EPS: {fundamental_data['ProjectedEPS']}")
+            if 'ProjectedGrowthRate' in fundamental_data:
+                try:
+                    growth = float(fundamental_data['ProjectedGrowthRate'])
+                    forecast_parts.append(f"预测增长率: {growth:.2f}%")
+                except:
+                    forecast_parts.append(f"预测增长率: {fundamental_data['ProjectedGrowthRate']}")
+            if forecast_parts:
+                fundamental_sections.append("分析师预测:\n" + "\n".join([f"   - {p}" for p in forecast_parts]))
+            
+            fundamental_text = "\n\n".join(fundamental_sections) if fundamental_sections else "无可用数据"
+        else:
+            fundamental_text = None
+        
+        # 根据是否有基本面数据构建不同的提示词
+        if has_fundamental:
+            # 有基本面数据的完整分析提示词
+            prompt = f"""你是一位专业的股票分析师，擅长结合技术分析和基本面分析。请基于以下技术指标和基本面数据，给出全面的投资分析和建议。
 
 股票代码: {symbol.upper()}
 当前价格: ${indicators.get('current_price', 0):.2f}
 数据周期: {duration} ({indicators.get('data_points', 0)}个数据点)
+
+【技术指标分析】
+1. 移动平均线:
+   - MA5: ${indicators.get('ma5', 0):.2f}
+   - MA20: ${indicators.get('ma20', 0):.2f}
+   - MA50: ${indicators.get('ma50', 0):.2f}
+
+2. 动量指标:
+   - RSI(14): {indicators.get('rsi', 0):.1f}
+   - MACD: {indicators.get('macd', 0):.3f}
+   - 信号线: {indicators.get('macd_signal', 0):.3f}
+
+3. 波动指标:
+   - 布林带上轨: ${indicators.get('bb_upper', 0):.2f}
+   - 布林带中轨: ${indicators.get('bb_middle', 0):.2f}
+   - 布林带下轨: ${indicators.get('bb_lower', 0):.2f}
+   - ATR: ${indicators.get('atr', 0):.2f}
+
+4. KDJ指标:
+   - K: {indicators.get('kdj_k', 0):.1f}
+   - D: {indicators.get('kdj_d', 0):.1f}
+   - J: {indicators.get('kdj_j', 0):.1f}
+
+5. 趋势分析:
+   - 趋势方向: {indicators.get('trend_direction', 'neutral')}
+   - 趋势强度: {indicators.get('trend_strength', 0):.0f}%
+   - 连续上涨天数: {indicators.get('consecutive_up_days', 0)}
+   - 连续下跌天数: {indicators.get('consecutive_down_days', 0)}
+
+6. 支撑压力位:
+   - 枢轴点: ${indicators.get('pivot', 0):.2f}
+   - 压力位R1: ${indicators.get('pivot_r1', 0):.2f}
+   - 支撑位S1: ${indicators.get('pivot_s1', 0):.2f}
+
+7. 现代技术指标:
+   - Ichimoku云图:
+     * 转换线: ${indicators.get('ichimoku_tenkan_sen', 0):.2f}
+     * 基准线: ${indicators.get('ichimoku_kijun_sen', 0):.2f}
+     * 先行跨度A: ${indicators.get('ichimoku_senkou_span_a', 0):.2f}
+     * 先行跨度B: ${indicators.get('ichimoku_senkou_span_b', 0):.2f}
+   - 斐波那契回撤位:
+     * 23.6%: ${indicators.get('fib_23.6', 0):.2f}
+     * 38.2%: ${indicators.get('fib_38.2', 0):.2f}
+     * 50.0%: ${indicators.get('fib_50.0', 0):.2f}
+     * 61.8%: ${indicators.get('fib_61.8', 0):.2f}
+     * 78.6%: ${indicators.get('fib_78.6', 0):.2f}
+
+8. 风险评估:
+   - 风险等级: {signals.get('risk', {}).get('level', 'unknown') if signals.get('risk') else 'unknown'}
+   - 风险评分: {signals.get('risk', {}).get('score', 0) if signals.get('risk') else 0}/100
+
+9. 系统建议:
+   - 综合评分: {signals.get('score', 0)}/100
+   - 建议操作: {signals.get('recommendation', 'unknown')}
+
+【基本面分析】
+{fundamental_text}
+
+请提供以下分析:
+1. 技术面分析: 当前市场状态（趋势、动能、波动）、关键技术信号解读
+2. 基本面分析: 公司财务状况评估、估值水平分析、盈利能力评价
+3. 综合分析: 结合技术面和基本面，给出买入/卖出/观望的具体建议
+4. 风险提示: 技术风险和基本面风险的综合评估
+5. 操作建议: 建议的止损止盈位、仓位管理建议
+6. 市场展望: 结合技术指标和基本面数据，分析未来可能的情境（牛市、熊市、震荡市中的不同策略）
+
+请用中文回答，简洁专业，重点突出，将技术分析和基本面分析有机结合。"""
+        else:
+            # 没有基本面数据，只进行技术分析
+            prompt = f"""你是一位专业的股票技术分析师。请基于以下技术指标数据，给出详细的技术分析和交易建议。
+
+股票代码: {symbol.upper()}
+当前价格: ${indicators.get('current_price', 0):.2f}
+数据周期: {duration} ({indicators.get('data_points', 0)}个数据点)
+
+【注意】该股票暂无基本面数据（可能是ETF或特殊证券），请仅基于技术指标进行分析。
 
 技术指标:
 1. 移动平均线:
@@ -2560,9 +2745,6 @@ def ai_analyze_stock(symbol):
      * 50.0%: ${indicators.get('fib_50.0', 0):.2f}
      * 61.8%: ${indicators.get('fib_61.8', 0):.2f}
      * 78.6%: ${indicators.get('fib_78.6', 0):.2f}
-   - 艾略特波浪:
-     * 趋势: {indicators.get('elliott_wave_trend', 'unknown')}
-     * 强度: {indicators.get('elliott_wave_strength', 0):.2f}%
 
 8. 风险评估:
    - 风险等级: {signals.get('risk', {}).get('level', 'unknown') if signals.get('risk') else 'unknown'}
@@ -2572,13 +2754,10 @@ def ai_analyze_stock(symbol):
    - 综合评分: {signals.get('score', 0)}/100
    - 建议操作: {signals.get('recommendation', 'unknown')}
 
-宏观经济指标:
-{macro_text}
-
 请提供:
 1. 当前市场状态分析（趋势、动能、波动）
-2. 关键技术信号解读（包括Ichimoku云图、斐波那契回撤位、艾略特波浪等现代技术指标）
-3. 买入/卖出/观望的具体建议
+2. 关键技术信号解读（包括Ichimoku云图、斐波那契回撤位等现代技术指标）
+3. 买入/卖出/观望的具体建议（基于纯技术分析）
 4. 风险提示和注意事项
 5. 建议的止损止盈位
 6. 市场情绪和可能的情境分析（如牛市、熊市、震荡市中的不同策略）

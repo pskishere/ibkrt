@@ -681,18 +681,229 @@ class TradingCLI:
             if high_low_parts:
                 print(f"  {' | '.join(high_low_parts)}")
 
-            # 宏观经济指标
-            macro_data = indicators.get('macro_indicators')
-            if isinstance(macro_data, dict) and macro_data:
+            # IBKR基本面数据
+            fundamental_data = indicators.get('fundamental_data')
+            if fundamental_data and isinstance(fundamental_data, dict) and 'raw_xml' not in fundamental_data:
                 print("=" * 70)
-                print("🌐 宏观经济指标 (FRED)")
-                for item in macro_data.values():
-                    title = item.get('title', '未知指标')
-                    date = item.get('date', '未知日期')
-                    value = item.get('value')
-                    unit = item.get('unit', '')
-                    value_display = f"{value:.2f}" if isinstance(value, (int, float)) and value is not None else str(value)
-                    print(f"  {title}: {value_display} ({unit}) | 日期: {date}")
+                print("📋 IBKR基本面数据")
+                print("=" * 70)
+                
+                # 格式化数值的辅助函数
+                def format_number(value_str, unit='', decimals=2):
+                    """格式化数值显示"""
+                    try:
+                        value = float(value_str)
+                        if abs(value) >= 1e9:
+                            return f"${value/1e9:.{decimals}f}B" + unit
+                        elif abs(value) >= 1e6:
+                            return f"${value/1e6:.{decimals}f}M" + unit
+                        elif abs(value) >= 1e3:
+                            return f"${value/1e3:.{decimals}f}K" + unit
+                        else:
+                            return f"${value:.{decimals}f}" + unit
+                    except (ValueError, TypeError):
+                        return str(value_str) + unit
+                
+                def format_percent(value_str, decimals=2):
+                    """格式化百分比"""
+                    try:
+                        value = float(value_str)
+                        return f"{value:.{decimals}f}%"
+                    except (ValueError, TypeError):
+                        return str(value_str) + "%"
+                
+                def format_shares(value_str):
+                    """格式化股数"""
+                    try:
+                        value = float(value_str)
+                        if value >= 1e9:
+                            return f"{value/1e9:.2f}B股"
+                        elif value >= 1e6:
+                            return f"{value/1e6:.2f}M股"
+                        else:
+                            return f"{int(value):,}股"
+                    except (ValueError, TypeError):
+                        return str(value_str)
+                
+                # 1. 基本信息
+                if 'CompanyName' in fundamental_data:
+                    print(f"\n🏢 基本信息:")
+                    print(f"  公司名称: {fundamental_data['CompanyName']}")
+                    if 'Exchange' in fundamental_data:
+                        print(f"  交易所: {fundamental_data['Exchange']}")
+                    if 'Employees' in fundamental_data:
+                        try:
+                            employees = int(fundamental_data['Employees'])
+                            print(f"  员工数: {employees:,}人")
+                        except (ValueError, TypeError):
+                            print(f"  员工数: {fundamental_data['Employees']}人")
+                    if 'SharesOutstanding' in fundamental_data:
+                        shares = format_shares(fundamental_data['SharesOutstanding'])
+                        print(f"  流通股数: {shares}")
+                
+                # 2. 市值和价格
+                price_section = False
+                if 'MarketCap' in fundamental_data:
+                    if not price_section:
+                        print(f"\n💰 市值与价格:")
+                        price_section = True
+                    market_cap = format_number(fundamental_data['MarketCap'])
+                    print(f"  市值: {market_cap}")
+                
+                if 'Price' in fundamental_data:
+                    if not price_section:
+                        print(f"\n💰 市值与价格:")
+                        price_section = True
+                    price = format_number(fundamental_data['Price'], decimals=2)
+                    print(f"  当前价: {price}")
+                
+                if '52WeekHigh' in fundamental_data and '52WeekLow' in fundamental_data:
+                    high = format_number(fundamental_data['52WeekHigh'], decimals=2)
+                    low = format_number(fundamental_data['52WeekLow'], decimals=2)
+                    print(f"  52周区间: {low} - {high}")
+                
+                # 3. 财务指标
+                financial_section = False
+                if 'RevenueTTM' in fundamental_data:
+                    if not financial_section:
+                        print(f"\n📊 财务指标 (TTM):")
+                        financial_section = True
+                    revenue = format_number(fundamental_data['RevenueTTM'])
+                    print(f"  营收: {revenue}")
+                
+                if 'NetIncomeTTM' in fundamental_data:
+                    if not financial_section:
+                        print(f"\n📊 财务指标 (TTM):")
+                        financial_section = True
+                    net_income = format_number(fundamental_data['NetIncomeTTM'])
+                    print(f"  净利润: {net_income}")
+                
+                if 'EBITDATTM' in fundamental_data:
+                    if not financial_section:
+                        print(f"\n📊 财务指标 (TTM):")
+                        financial_section = True
+                    ebitda = format_number(fundamental_data['EBITDATTM'])
+                    print(f"  EBITDA: {ebitda}")
+                
+                if 'ProfitMargin' in fundamental_data:
+                    if not financial_section:
+                        print(f"\n📊 财务指标 (TTM):")
+                        financial_section = True
+                    margin = format_percent(fundamental_data['ProfitMargin'])
+                    print(f"  利润率: {margin}")
+                
+                if 'GrossMargin' in fundamental_data:
+                    if not financial_section:
+                        print(f"\n📊 财务指标 (TTM):")
+                        financial_section = True
+                    gross_margin = format_percent(fundamental_data['GrossMargin'])
+                    print(f"  毛利率: {gross_margin}")
+                
+                # 4. 每股数据
+                per_share_section = False
+                if 'EPS' in fundamental_data:
+                    if not per_share_section:
+                        print(f"\n📈 每股数据:")
+                        per_share_section = True
+                    eps = format_number(fundamental_data['EPS'], decimals=2)
+                    print(f"  每股收益(EPS): {eps}")
+                
+                if 'BookValuePerShare' in fundamental_data:
+                    if not per_share_section:
+                        print(f"\n📈 每股数据:")
+                        per_share_section = True
+                    bvps = format_number(fundamental_data['BookValuePerShare'], decimals=2)
+                    print(f"  每股净资产: {bvps}")
+                
+                if 'CashPerShare' in fundamental_data:
+                    if not per_share_section:
+                        print(f"\n📈 每股数据:")
+                        per_share_section = True
+                    cps = format_number(fundamental_data['CashPerShare'], decimals=2)
+                    print(f"  每股现金: {cps}")
+                
+                if 'DividendPerShare' in fundamental_data:
+                    if not per_share_section:
+                        print(f"\n📈 每股数据:")
+                        per_share_section = True
+                    dps = format_number(fundamental_data['DividendPerShare'], decimals=3)
+                    print(f"  每股股息: {dps}")
+                
+                # 5. 估值指标
+                valuation_section = False
+                if 'PE' in fundamental_data:
+                    if not valuation_section:
+                        print(f"\n💎 估值指标:")
+                        valuation_section = True
+                    pe = fundamental_data['PE']
+                    try:
+                        pe_val = float(pe)
+                        print(f"  市盈率(PE): {pe_val:.2f}")
+                    except (ValueError, TypeError):
+                        print(f"  市盈率(PE): {pe}")
+                
+                if 'PriceToBook' in fundamental_data:
+                    if not valuation_section:
+                        print(f"\n💎 估值指标:")
+                        valuation_section = True
+                    pb = fundamental_data['PriceToBook']
+                    try:
+                        pb_val = float(pb)
+                        print(f"  市净率(PB): {pb_val:.2f}")
+                    except (ValueError, TypeError):
+                        print(f"  市净率(PB): {pb}")
+                
+                if 'ROE' in fundamental_data:
+                    if not valuation_section:
+                        print(f"\n💎 估值指标:")
+                        valuation_section = True
+                    roe = format_percent(fundamental_data['ROE'])
+                    print(f"  净资产收益率(ROE): {roe}")
+                
+                # 6. 预测数据
+                forecast_section = False
+                if 'TargetPrice' in fundamental_data:
+                    if not forecast_section:
+                        print(f"\n🔮 分析师预测:")
+                        forecast_section = True
+                    target = format_number(fundamental_data['TargetPrice'], decimals=2)
+                    print(f"  目标价: {target}")
+                
+                if 'ConsensusRecommendation' in fundamental_data:
+                    if not forecast_section:
+                        print(f"\n🔮 分析师预测:")
+                        forecast_section = True
+                    consensus = fundamental_data['ConsensusRecommendation']
+                    try:
+                        consensus_val = float(consensus)
+                        if consensus_val <= 1.5:
+                            rec = "强烈买入"
+                        elif consensus_val <= 2.5:
+                            rec = "买入"
+                        elif consensus_val <= 3.5:
+                            rec = "持有"
+                        elif consensus_val <= 4.5:
+                            rec = "卖出"
+                        else:
+                            rec = "强烈卖出"
+                        print(f"  共识评级: {rec} ({consensus_val:.2f})")
+                    except (ValueError, TypeError):
+                        print(f"  共识评级: {consensus}")
+                
+                if 'ProjectedEPS' in fundamental_data:
+                    if not forecast_section:
+                        print(f"\n🔮 分析师预测:")
+                        forecast_section = True
+                    proj_eps = format_number(fundamental_data['ProjectedEPS'], decimals=2)
+                    print(f"  预测EPS: {proj_eps}")
+                
+                if 'ProjectedGrowthRate' in fundamental_data:
+                    if not forecast_section:
+                        print(f"\n🔮 分析师预测:")
+                        forecast_section = True
+                    growth = format_percent(fundamental_data['ProjectedGrowthRate'])
+                    print(f"  预测增长率: {growth}")
+                
                 print()
             
             # 买卖信号
