@@ -163,14 +163,12 @@ export const aiAnalyze = async (symbol, duration = '3 M', barSize = '1 day', mod
 };
 
 /**
- * 获取热门股票列表
- * @param {string} market - 市场类型，默认 'US'
+ * 获取热门股票列表（仅美股）
  * @param {number} limit - 返回数量限制，默认 20
  */
-export const getHotStocks = async (market = 'US', limit = 20) => {
+export const getHotStocks = async (limit = 20) => {
   try {
     const params = new URLSearchParams({
-      market: market,
       limit: limit.toString(),
     });
     

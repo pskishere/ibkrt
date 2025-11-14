@@ -2353,82 +2353,52 @@ def ai_analyze_stock(symbol):
 @app.route('/api/hot-stocks', methods=['GET'])
 def get_hot_stocks():
     """
-    获取热门股票代码列表
+    获取热门股票代码列表（仅美股）
     查询参数:
-    - market: 市场类型 (默认: 'US')，可选: 'US', 'HK', 'CN'
     - limit: 返回数量限制 (默认: 20)
     """
-    market = request.args.get('market', 'US').upper()
     limit = int(request.args.get('limit', 20))
     
-    # 定义热门股票列表
-    hot_stocks = {
-        'US': [
-            {'symbol': 'AAPL', 'name': 'Apple Inc.', 'category': '科技'},
-            {'symbol': 'MSFT', 'name': 'Microsoft Corporation', 'category': '科技'},
-            {'symbol': 'GOOGL', 'name': 'Alphabet Inc.', 'category': '科技'},
-            {'symbol': 'AMZN', 'name': 'Amazon.com Inc.', 'category': '电商'},
-            {'symbol': 'NVDA', 'name': 'NVIDIA Corporation', 'category': '半导体'},
-            {'symbol': 'META', 'name': 'Meta Platforms Inc.', 'category': '科技'},
-            {'symbol': 'TSLA', 'name': 'Tesla Inc.', 'category': '汽车'},
-            {'symbol': 'BRK.B', 'name': 'Berkshire Hathaway Inc.', 'category': '金融'},
-            {'symbol': 'V', 'name': 'Visa Inc.', 'category': '金融'},
-            {'symbol': 'JNJ', 'name': 'Johnson & Johnson', 'category': '医疗'},
-            {'symbol': 'WMT', 'name': 'Walmart Inc.', 'category': '零售'},
-            {'symbol': 'JPM', 'name': 'JPMorgan Chase & Co.', 'category': '金融'},
-            {'symbol': 'MA', 'name': 'Mastercard Inc.', 'category': '金融'},
-            {'symbol': 'PG', 'name': 'Procter & Gamble Co.', 'category': '消费品'},
-            {'symbol': 'UNH', 'name': 'UnitedHealth Group Inc.', 'category': '医疗'},
-            {'symbol': 'HD', 'name': 'The Home Depot Inc.', 'category': '零售'},
-            {'symbol': 'DIS', 'name': 'The Walt Disney Company', 'category': '娱乐'},
-            {'symbol': 'BAC', 'name': 'Bank of America Corp.', 'category': '金融'},
-            {'symbol': 'ADBE', 'name': 'Adobe Inc.', 'category': '科技'},
-            {'symbol': 'NFLX', 'name': 'Netflix Inc.', 'category': '娱乐'},
-            {'symbol': 'CRM', 'name': 'Salesforce.com Inc.', 'category': '科技'},
-            {'symbol': 'PYPL', 'name': 'PayPal Holdings Inc.', 'category': '金融'},
-            {'symbol': 'INTC', 'name': 'Intel Corporation', 'category': '半导体'},
-            {'symbol': 'CMCSA', 'name': 'Comcast Corporation', 'category': '媒体'},
-            {'symbol': 'PFE', 'name': 'Pfizer Inc.', 'category': '医疗'},
-            {'symbol': 'COST', 'name': 'Costco Wholesale Corporation', 'category': '零售'},
-            {'symbol': 'TMO', 'name': 'Thermo Fisher Scientific Inc.', 'category': '医疗'},
-            {'symbol': 'AVGO', 'name': 'Broadcom Inc.', 'category': '半导体'},
-            {'symbol': 'CSCO', 'name': 'Cisco Systems Inc.', 'category': '科技'},
-            {'symbol': 'ABBV', 'name': 'AbbVie Inc.', 'category': '医疗'},
-        ],
-        'HK': [
-            {'symbol': '0700', 'name': '腾讯控股', 'category': '科技'},
-            {'symbol': '0941', 'name': '中国移动', 'category': '电信'},
-            {'symbol': '1299', 'name': '友邦保险', 'category': '保险'},
-            {'symbol': '0388', 'name': '香港交易所', 'category': '金融'},
-            {'symbol': '0005', 'name': '汇丰控股', 'category': '银行'},
-            {'symbol': '2318', 'name': '中国平安', 'category': '保险'},
-            {'symbol': '1398', 'name': '工商银行', 'category': '银行'},
-            {'symbol': '3988', 'name': '中国银行', 'category': '银行'},
-            {'symbol': '9988', 'name': '阿里巴巴-SW', 'category': '电商'},
-            {'symbol': '3690', 'name': '美团-W', 'category': '科技'},
-        ],
-        'CN': [
-            {'symbol': '000001', 'name': '平安银行', 'category': '银行'},
-            {'symbol': '000002', 'name': '万科A', 'category': '地产'},
-            {'symbol': '600000', 'name': '浦发银行', 'category': '银行'},
-            {'symbol': '600036', 'name': '招商银行', 'category': '银行'},
-            {'symbol': '600519', 'name': '贵州茅台', 'category': '消费'},
-            {'symbol': '000858', 'name': '五粮液', 'category': '消费'},
-            {'symbol': '002415', 'name': '海康威视', 'category': '科技'},
-            {'symbol': '300059', 'name': '东方财富', 'category': '金融'},
-            {'symbol': '002594', 'name': '比亚迪', 'category': '汽车'},
-            {'symbol': '300750', 'name': '宁德时代', 'category': '新能源'},
-        ],
-    }
-    
-    stocks = hot_stocks.get(market, hot_stocks['US'])
+    # 定义热门股票列表（仅美股）
+    hot_stocks = [
+        {'symbol': 'AAPL', 'name': 'Apple Inc.', 'category': '科技'},
+        {'symbol': 'MSFT', 'name': 'Microsoft Corporation', 'category': '科技'},
+        {'symbol': 'GOOGL', 'name': 'Alphabet Inc.', 'category': '科技'},
+        {'symbol': 'AMZN', 'name': 'Amazon.com Inc.', 'category': '电商'},
+        {'symbol': 'NVDA', 'name': 'NVIDIA Corporation', 'category': '半导体'},
+        {'symbol': 'META', 'name': 'Meta Platforms Inc.', 'category': '科技'},
+        {'symbol': 'TSLA', 'name': 'Tesla Inc.', 'category': '汽车'},
+        {'symbol': 'BRK.B', 'name': 'Berkshire Hathaway Inc.', 'category': '金融'},
+        {'symbol': 'V', 'name': 'Visa Inc.', 'category': '金融'},
+        {'symbol': 'JNJ', 'name': 'Johnson & Johnson', 'category': '医疗'},
+        {'symbol': 'WMT', 'name': 'Walmart Inc.', 'category': '零售'},
+        {'symbol': 'JPM', 'name': 'JPMorgan Chase & Co.', 'category': '金融'},
+        {'symbol': 'MA', 'name': 'Mastercard Inc.', 'category': '金融'},
+        {'symbol': 'PG', 'name': 'Procter & Gamble Co.', 'category': '消费品'},
+        {'symbol': 'UNH', 'name': 'UnitedHealth Group Inc.', 'category': '医疗'},
+        {'symbol': 'HD', 'name': 'The Home Depot Inc.', 'category': '零售'},
+        {'symbol': 'DIS', 'name': 'The Walt Disney Company', 'category': '娱乐'},
+        {'symbol': 'BAC', 'name': 'Bank of America Corp.', 'category': '金融'},
+        {'symbol': 'ADBE', 'name': 'Adobe Inc.', 'category': '科技'},
+        {'symbol': 'NFLX', 'name': 'Netflix Inc.', 'category': '娱乐'},
+        {'symbol': 'CRM', 'name': 'Salesforce.com Inc.', 'category': '科技'},
+        {'symbol': 'PYPL', 'name': 'PayPal Holdings Inc.', 'category': '金融'},
+        {'symbol': 'INTC', 'name': 'Intel Corporation', 'category': '半导体'},
+        {'symbol': 'CMCSA', 'name': 'Comcast Corporation', 'category': '媒体'},
+        {'symbol': 'PFE', 'name': 'Pfizer Inc.', 'category': '医疗'},
+        {'symbol': 'COST', 'name': 'Costco Wholesale Corporation', 'category': '零售'},
+        {'symbol': 'TMO', 'name': 'Thermo Fisher Scientific Inc.', 'category': '医疗'},
+        {'symbol': 'AVGO', 'name': 'Broadcom Inc.', 'category': '半导体'},
+        {'symbol': 'CSCO', 'name': 'Cisco Systems Inc.', 'category': '科技'},
+        {'symbol': 'ABBV', 'name': 'AbbVie Inc.', 'category': '医疗'},
+    ]
     
     # 限制返回数量
-    result = stocks[:limit] if limit > 0 else stocks
+    result = hot_stocks[:limit] if limit > 0 else hot_stocks
     
     return jsonify({
         'success': True,
-        'market': market,
+        'market': 'US',
         'count': len(result),
         'stocks': result
     })
@@ -2459,7 +2429,7 @@ def index():
             'fundamental': 'GET /api/fundamental/<symbol>',
             'analyze': 'GET /api/analyze/<symbol>',
             'ai_analyze': 'GET /api/ai-analyze/<symbol>',
-            'hot_stocks': 'GET /api/hot-stocks?market=US&limit=20'
+            'hot_stocks': 'GET /api/hot-stocks?limit=20'
         }
     })
 

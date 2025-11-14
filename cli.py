@@ -1391,18 +1391,17 @@ class TradingCLI:
             msg = result.get('message', '未知错误') if result else '查询失败'
             print(f"❌ {msg}")
     
-    def hot_stocks(self, market: str = 'US', limit: int = 20):
+    def hot_stocks(self, limit: int = 20):
         """
-        获取热门股票代码列表
+        获取热门股票代码列表（仅美股）
         """
-        params = f"?market={market}&limit={limit}"
+        params = f"?limit={limit}"
         result = self._request('GET', f'/api/hot-stocks{params}')
         
         if result and result.get('success'):
             stocks = result.get('stocks', [])
-            market_name = result.get('market', market)
             
-            print(f"\n🔥 {market_name} 热门股票 (共{len(stocks)}个):")
+            print(f"\n🔥 美股热门股票 (共{len(stocks)}个):")
             print("-" * 80)
             print(f"{'代码':<10} {'名称':<30} {'类别':<15}")
             print("-" * 80)
@@ -1429,7 +1428,7 @@ class TradingCLI:
   o              订单        q  AAPL        报价
   i  AAPL        详情        an AAPL        技术分析(自动AI)
   ti AAPL        指标解释    ti AAPL 3M 1day 自定义周期
-  hot            热门股票    hot US 20       美股热门(20个)
+  hot            热门股票    hot 20          美股热门(20个)
 
 📊 交易:
   b AAPL 10      市价买      b AAPL 10 175  限价买
@@ -1448,11 +1447,6 @@ class TradingCLI:
   c              连接        d              断开
   st             状态        clear          清屏
   ?              帮助        exit           退出
-
-💡 提示:
-  • AI分析需要先安装Ollama: brew install ollama
-  • 启动Ollama服务: ollama serve
-  • 拉取模型: ollama pull deepseek-v3.1:671b-cloud
         """)
         print("=" * 70 + "\n")
 
@@ -1568,9 +1562,8 @@ def main():
                     cli.history(symbol, duration, bar_size)
             
             elif cmd in ['hot', 'hot-stocks']:
-                market = args[0] if len(args) > 0 else 'US'
-                limit = int(args[1]) if len(args) > 1 else 20
-                cli.hot_stocks(market, limit)
+                limit = int(args[0]) if len(args) > 0 else 20
+                cli.hot_stocks(limit)
             
             # 交易命令
             elif cmd in ['buy', 'b']:

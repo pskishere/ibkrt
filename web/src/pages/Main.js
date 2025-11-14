@@ -215,7 +215,7 @@ const MainPage = () => {
    */
   const loadHotStocks = async () => {
     try {
-      const result = await getHotStocks('US', 30);
+      const result = await getHotStocks(30);
       if (result.success && result.stocks) {
         setHotStocks(result.stocks);
         // 转换为 AutoComplete 需要的格式
