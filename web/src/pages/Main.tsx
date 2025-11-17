@@ -304,8 +304,8 @@ const MainPage: React.FC = () => {
     if (!info) return null;
 
     return (
-      <div style={{ maxWidth: 400, fontSize: 13 }}>
-        <Title level={5} style={{ marginBottom: 0, fontSize: 14 }}>
+      <div style={{ maxWidth: 400, fontSize: 13, paddingTop: 0 }}>
+        <Title level={5} style={{ marginTop: 0, marginBottom: 0, fontSize: 14 }}>
           {info.name}
         </Title>
         <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
@@ -355,6 +355,7 @@ const MainPage: React.FC = () => {
           title={null}
           trigger="click"
           placement="right"
+          overlayInnerStyle={{ paddingTop: 8, paddingBottom: 12 }}
         >
           <QuestionCircleOutlined 
             style={{ 
