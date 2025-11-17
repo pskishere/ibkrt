@@ -670,6 +670,7 @@ class IBGateway(EWrapper, EClient):
             data = self.historical_data.get(req_id, []).copy()
         
         if data_complete and data:
+            print('获取数据', data)
             logger.info(f"历史数据接收成功: {symbol}, 数据条数: {len(data)}")
         elif data:
             logger.warning(f"历史数据可能不完整: {symbol}, 数据条数: {len(data)}")
@@ -2404,6 +2405,192 @@ def get_hot_stocks():
     })
 
 
+@app.route('/api/indicator-info', methods=['GET'])
+def get_indicator_info():
+    """
+    获取技术指标解释和参考范围
+    查询参数:
+    - indicator: 指标名称（可选），不提供则返回所有指标信息
+    """
+    indicator_name = request.args.get('indicator', '').lower()
+    
+    # 定义所有技术指标的解释和参考范围
+    indicator_info = {
+        'ma': {
+            'name': '移动平均线 MA',
+            'description': '移动平均线用于平滑价格波动，识别趋势方向',
+            'calculation': 'MA = (P1 + P2 + ... + Pn) / n，其中P为收盘价，n为周期',
+            'reference_range': {
+                'ma5': 'MA5: 5日均线，用于观察短期趋势与支撑/压力',
+                'ma10': 'MA10: 10日均线，用于观察中短期趋势与支撑/压力',
+                'ma20': 'MA20: 20日均线，用于观察中期趋势与支撑/压力',
+                'ma50': 'MA50: 50日均线，用于观察长期趋势与支撑/压力'
+            },
+            'interpretation': '价格上穿均线常视为偏强，下穿视为偏弱；多均线多头/空头排列用于判断趋势延续',
+            'usage': '结合价格与均线位置判断趋势，多均线排列判断趋势强度'
+        },
+        'rsi': {
+            'name': 'RSI 相对强弱指数',
+            'description': 'RSI衡量价格动能，反映超买超卖状态',
+            'calculation': 'RSI = 100 - (100 / (1 + RS))，其中RS = 平均上涨幅度 / 平均下跌幅度',
+            'reference_range': {
+                '超卖': '<30 超卖区域，可能反弹',
+                '正常': '30-70 正常区间',
+                '超买': '>70 超买区域，可能回调'
+            },
+            'interpretation': 'RSI衡量价格动能，极端值提示可能的反转风险，但需结合趋势',
+            'usage': 'RSI<30关注反弹机会，RSI>70注意回调风险，结合趋势方向使用'
+        },
+        'bb': {
+            'name': '布林带 Bollinger Bands',
+            'description': '布林带通过标准差衡量价格波动范围',
+            'calculation': '中轨=MA(20)，上轨=中轨+2*标准差，下轨=中轨-2*标准差',
+            'reference_range': {
+                '上轨': '价格接近上轨可能回调',
+                '中轨': '价格在中轨附近震荡',
+                '下轨': '价格接近下轨可能反弹',
+                '带宽': '带宽扩大常伴随波动放大'
+            },
+            'interpretation': '价格接近上轨可能回调，接近下轨可能反弹；带宽扩大常伴随波动放大',
+            'usage': '价格触及上下轨关注反转，带宽变化判断波动率'
+        },
+        'macd': {
+            'name': 'MACD 指标',
+            'description': 'MACD通过快慢均线差异判断趋势和动能，是趋势跟踪和动量指标',
+            'calculation': 'MACD = EMA(12) - EMA(26)，Signal = EMA(9) of MACD，Histogram = MACD - Signal',
+            'reference_range': {
+                'MACD线': 'MACD = 短期均线(12日) - 长期均线(26日)。正值表示短期趋势强于长期（上涨动能），负值表示短期趋势弱于长期（下跌动能）。数值越大，趋势越强',
+                'Signal线': 'Signal是MACD的9日移动平均，用于平滑MACD信号。Signal线在MACD上方表示趋势可能转弱，在下方表示趋势可能转强',
+                'Histogram柱状图': 'Histogram = MACD - Signal。柱状图为正且增大表示上涨动能增强，为负且减小表示下跌动能减弱。柱状图由负转正（零轴上方）是买入信号，由正转负（零轴下方）是卖出信号',
+                '金叉': 'MACD线从下方穿越Signal线（MACD > Signal），表示上涨动能增强，通常视为买入信号',
+                '死叉': 'MACD线从上方穿越Signal线（MACD < Signal），表示上涨动能减弱，通常视为卖出信号',
+                '零轴': 'MACD在零轴上方表示整体趋势向上，在零轴下方表示整体趋势向下。MACD穿越零轴是重要的趋势转换信号'
+            },
+            'interpretation': 'MACD数值本身没有固定范围，需要结合股票价格来理解。例如：MACD = 0.5 表示12日均线比26日均线高0.5美元。MACD > 0 且持续增大，表示上涨趋势加速；MACD < 0 且持续减小，表示下跌趋势加速。Histogram柱状图的高度表示动能强度，柱状图越高（绝对值越大），动能越强。当MACD和Signal都在零轴上方且MACD > Signal时，是最强的看涨信号；反之，都在零轴下方且MACD < Signal时，是最强的看跌信号',
+            'usage': '1) 关注MACD与Signal的交叉点（金叉/死叉）作为买卖信号；2) 观察Histogram柱状图的变化趋势，柱状图增大表示动能增强；3) 结合MACD与零轴的位置判断整体趋势方向；4) 当MACD、Signal和Histogram三者同向时，信号更可靠；5) 在震荡市中MACD可能频繁交叉，需要结合其他指标确认'
+        },
+        'kdj': {
+            'name': 'KDJ 指标',
+            'description': 'KDJ通过最高价、最低价和收盘价计算超买超卖',
+            'calculation': 'K = (RSV的3日移动平均)，D = (K的3日移动平均)，J = 3K - 2D',
+            'reference_range': {
+                '超卖': 'J<20 常见超卖，可能反弹',
+                '正常': '20-80 正常区间',
+                '超买': 'J>80 常见超买，可能回调',
+                '金叉': 'K上穿D视为偏强信号',
+                '死叉': 'K下穿D视为偏弱信号'
+            },
+            'interpretation': 'J<20常见超卖，J>80常见超买；K上穿D视为偏强信号',
+            'usage': '关注J值极端区域，K与D交叉判断买卖信号'
+        },
+        'williams_r': {
+            'name': 'Williams %R',
+            'description': '威廉指标衡量收盘价在最高最低价区间的位置',
+            'calculation': '%R = (最高价 - 收盘价) / (最高价 - 最低价) * -100',
+            'reference_range': {
+                '超卖': '< -80 超卖区域，可能反弹',
+                '正常': '-80 到 -20 正常区间',
+                '超买': '> -20 超买区域，可能回调'
+            },
+            'interpretation': '与RSI类似，用于刻画超买超卖区间，宜结合趋势判读',
+            'usage': '关注极端值区域，结合趋势方向判断'
+        },
+        'atr': {
+            'name': 'ATR 平均真实波幅',
+            'description': 'ATR衡量价格波动幅度，用于设置止损和仓位',
+            'calculation': 'TR = max(最高价-最低价, |最高价-前收盘|, |最低价-前收盘|)，ATR = TR的N日移动平均',
+            'reference_range': {
+                '低波动': 'ATR较小，波动率低',
+                '高波动': 'ATR较大，波动率高'
+            },
+            'interpretation': 'ATR反映近段真实波幅，用于设置止损与仓位',
+            'usage': 'ATR大时设置更宽止损，ATR小时设置更紧止损'
+        },
+        'volatility': {
+            'name': '波动率',
+            'description': '波动率衡量价格变化的幅度',
+            'calculation': '波动率 = 标准差 / 平均值 * 100',
+            'reference_range': {
+                '低': '≤2% 低波动',
+                '中': '2-3% 中等波动',
+                '高': '3-5% 高波动',
+                '极高': '>5% 极高波动'
+            },
+            'interpretation': '波动大时风险与机会并存',
+            'usage': '波动率高时注意风险控制，波动率低时可能酝酿突破'
+        },
+        'volume_ratio': {
+            'name': '成交量比率',
+            'description': '成交量比率反映当前成交量与平均成交量的关系',
+            'calculation': '成交量比率 = 当前成交量 / 平均成交量',
+            'reference_range': {
+                '缩量': '<0.7 缩量，市场参与度低',
+                '正常': '0.7-1.5 正常成交量',
+                '放量': '>1.5 放量，市场参与度高'
+            },
+            'interpretation': '放量通常伴随价格突破，缩量可能预示趋势减弱',
+            'usage': '结合价格变化判断量价关系，放量突破更可靠'
+        },
+        'obv': {
+            'name': 'OBV 能量潮',
+            'description': 'OBV通过成交量变化判断资金流向',
+            'calculation': '价格上涨时OBV增加，价格下跌时OBV减少',
+            'reference_range': {
+                '上升': 'OBV上升，资金流入',
+                '下降': 'OBV下降，资金流出',
+                '量价齐升': 'OBV上升且价格上涨，强势信号',
+                '量价背离': 'OBV与价格反向，可能反转'
+            },
+            'interpretation': 'OBV趋势与价格趋势一致时趋势更可靠，背离时注意反转',
+            'usage': '关注OBV趋势方向，结合价格判断量价关系'
+        },
+        'trend_strength': {
+            'name': '趋势强度',
+            'description': '趋势强度衡量当前趋势的可靠性',
+            'calculation': '基于多个技术指标的综合评估',
+            'reference_range': {
+                '弱': '0-25% 趋势较弱',
+                '中': '25-50% 趋势中等',
+                '强': '>50% 趋势较强'
+            },
+            'interpretation': '趋势强度高时趋势延续概率大，强度低时可能反转',
+            'usage': '结合趋势方向，强度高时顺势操作，强度低时谨慎'
+        },
+        'pivot': {
+            'name': '枢轴与支撑/压力',
+            'description': '枢轴点用于计算支撑位和压力位',
+            'calculation': 'Pivot = (最高价 + 最低价 + 收盘价) / 3，R1/R2/R3和S1/S2/S3基于枢轴点计算',
+            'reference_range': {
+                '支撑': '接近支撑位关注反弹',
+                '压力': '接近压力位关注回落',
+                '破位': '破位需结合量价确认'
+            },
+            'interpretation': '接近支撑关注反弹，接近压力关注回落；破位需结合量价确认',
+            'usage': '在支撑位附近寻找买入机会，在压力位附近注意卖出'
+        }
+    }
+    
+    # 如果指定了指标名称，只返回该指标信息
+    if indicator_name:
+        if indicator_name in indicator_info:
+            return jsonify({
+                'success': True,
+                'indicator': indicator_name,
+                'info': indicator_info[indicator_name]
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'未找到指标: {indicator_name}'
+            }), 404
+    
+    # 返回所有指标信息
+    return jsonify({
+        'success': True,
+        'indicators': indicator_info
+    })
+
+
 @app.route('/', methods=['GET'])
 def index():
     """
@@ -2429,7 +2616,8 @@ def index():
             'fundamental': 'GET /api/fundamental/<symbol>',
             'analyze': 'GET /api/analyze/<symbol>',
             'ai_analyze': 'GET /api/ai-analyze/<symbol>',
-            'hot_stocks': 'GET /api/hot-stocks?limit=20'
+            'hot_stocks': 'GET /api/hot-stocks?limit=20',
+            'indicator_info': 'GET /api/indicator-info?indicator=rsi'
         }
     })
 

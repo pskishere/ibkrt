@@ -180,3 +180,26 @@ export const getHotStocks = async (limit = 20) => {
   }
 };
 
+/**
+ * 获取技术指标解释和参考范围
+ * @param {string} indicator - 指标名称（可选），不提供则返回所有指标信息
+ */
+export const getIndicatorInfo = async (indicator = '') => {
+  try {
+    const params = new URLSearchParams();
+    if (indicator) {
+      params.append('indicator', indicator);
+    }
+    
+    const url = indicator 
+      ? `/api/indicator-info?${params.toString()}`
+      : '/api/indicator-info';
+    
+    const response = await api.get(url);
+    return handleResponse(response);
+  } catch (error) {
+    handleError(error);
+    throw error;
+  }
+};
+

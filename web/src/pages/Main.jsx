@@ -24,6 +24,8 @@ import {
   Tabs,
   Collapse,
   FloatButton,
+  Popover,
+  Typography,
 } from 'antd';
 import {
   InboxOutlined,
@@ -36,6 +38,7 @@ import {
   RiseOutlined,
   FallOutlined,
   RightOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import {
   getPositions,
@@ -45,11 +48,13 @@ import {
   cancelOrder,
   analyze,
   getHotStocks,
+  getIndicatorInfo,
 } from '../services/api';
 import './Main.css';
 
 const { TabPane } = Tabs;
 const { TextArea } = Input;
+const { Text, Title } = Typography;
 
 const MainPage = () => {
   // 持仓相关状态
@@ -74,6 +79,9 @@ const MainPage = () => {
   // 热门股票相关状态
   const [hotStocks, setHotStocks] = useState([]);
   const [stockOptions, setStockOptions] = useState([]);
+  
+  // 技术指标解释信息
+  const [indicatorInfoMap, setIndicatorInfoMap] = useState({});
 
   /**
    * 加载持仓数据
@@ -231,11 +239,99 @@ const MainPage = () => {
     }
   };
 
+  /**
+   * 加载技术指标解释信息
+   */
+  const loadIndicatorInfo = async () => {
+    try {
+      const result = await getIndicatorInfo();
+      if (result.success && result.indicators) {
+        setIndicatorInfoMap(result.indicators);
+      }
+    } catch (error) {
+      console.error('加载指标解释失败:', error);
+      // 失败时不影响使用
+    }
+  };
+
+  /**
+   * 创建指标知识讲解的Popover内容
+   */
+  const createIndicatorKnowledgeContent = (indicatorKey) => {
+    const info = indicatorInfoMap[indicatorKey];
+    if (!info) return null;
+
+    return (
+      <div style={{ maxWidth: 400, fontSize: 13 }}>
+        <Title level={5} style={{ marginBottom: 8, fontSize: 14 }}>
+          {info.name}
+        </Title>
+        <Text style={{ display: 'block', marginBottom: 8 }}>
+          <strong>说明：</strong>{info.description}
+        </Text>
+        {info.calculation && (
+          <Text style={{ display: 'block', marginBottom: 8 }}>
+            <strong>计算方法：</strong>{info.calculation}
+          </Text>
+        )}
+        {info.reference_range && Object.keys(info.reference_range).length > 0 && (
+          <Text style={{ display: 'block', marginBottom: 8 }}>
+            <strong>参考范围：</strong>
+            <ul style={{ marginTop: 4, marginBottom: 0, paddingLeft: 20 }}>
+              {Object.entries(info.reference_range).map(([key, value]) => (
+                <li key={key} style={{ marginBottom: 4 }}>{value}</li>
+              ))}
+            </ul>
+          </Text>
+        )}
+        {info.interpretation && (
+          <Text style={{ display: 'block', marginBottom: 8 }}>
+            <strong>解读：</strong>{info.interpretation}
+          </Text>
+        )}
+        {info.usage && (
+          <Text style={{ display: 'block' }}>
+            <strong>使用方法：</strong>{info.usage}
+          </Text>
+        )}
+      </div>
+    );
+  };
+
+  /**
+   * 创建带知识讲解的指标标签
+   */
+  const createIndicatorLabel = (label, indicatorKey) => {
+    const info = indicatorInfoMap[indicatorKey];
+    if (!info) return label;
+
+    return (
+      <Space>
+        <span>{label}</span>
+        <Popover
+          content={createIndicatorKnowledgeContent(indicatorKey)}
+          title={null}
+          trigger="click"
+          placement="right"
+        >
+          <QuestionCircleOutlined 
+            style={{ 
+              color: '#1890ff', 
+              cursor: 'pointer',
+              fontSize: 12,
+            }} 
+          />
+        </Popover>
+      </Space>
+    );
+  };
+
   useEffect(() => {
     // 只在组件挂载时加载一次，不自动刷新
     loadPositions();
     loadOrders();
     loadHotStocks();
+    loadIndicatorInfo();
   }, []);
 
   /**
@@ -395,6 +491,26 @@ const MainPage = () => {
     if (rsi > 70) return { color: 'error', text: '超买' };
     return { color: 'default', text: '中性' };
   };
+
+  const data = [
+    {
+      time: '2017-10-24',
+      // 格式为：[open, close, lowest, highest]
+      value: [20, 34, 10, 38],
+    },
+    {
+      time: '2017-10-25',
+      value: [40, 35, 30, 50],
+    },
+    {
+      time: '2017-10-26',
+      value: [31, 38, 33, 44],
+    },
+    {
+      time: '2017-10-27',
+      value: [38, 15, 5, 42],
+    },
+  ];
 
   return (
     <div className="main-page">
@@ -559,7 +675,7 @@ const MainPage = () => {
                               {
                                 label: '数据点数',
                                 span: 1,
-                                children: `${analysisResult.indicators.data_points || 0}根K线`,
+                                children: `${analysisResult.indicators.data_points || 0}条数据`,
                               },
                               {
                                 label: '趋势方向',
@@ -577,7 +693,7 @@ const MainPage = () => {
                               title={
                                 <span>
                               <BarChartOutlined style={{ marginRight: 8 }} />
-                              移动平均线
+                              {createIndicatorLabel('移动平均线', 'ma')}
                                 </span>
                               }
                               bordered 
@@ -637,7 +753,7 @@ const MainPage = () => {
                               
                               if (indicators.rsi !== undefined) {
                                 items.push({
-                                  label: 'RSI(14)',
+                                  label: createIndicatorLabel('RSI(14)', 'rsi'),
                                   children: (
                                 <Space>
                                   <span style={{ fontSize: 16, fontWeight: 600 }}>
@@ -653,7 +769,7 @@ const MainPage = () => {
                               
                               if (indicators.macd !== undefined) {
                                 items.push({
-                                  label: 'MACD',
+                                  label: createIndicatorLabel('MACD', 'macd'),
                                   children: (
                                 <Space>
                                       <span>{formatValue(indicators.macd, 3)}</span>
@@ -669,42 +785,42 @@ const MainPage = () => {
                               
                               if (indicators.macd_signal !== undefined) {
                                 items.push({
-                                  label: 'MACD信号线',
+                                  label: createIndicatorLabel('MACD信号线', 'macd'),
                                   children: formatValue(indicators.macd_signal, 3),
                                 });
                               }
                               
                               if (indicators.macd_histogram !== undefined) {
                                 items.push({
-                                  label: 'MACD柱状图',
+                                  label: createIndicatorLabel('MACD柱状图', 'macd'),
                                   children: formatValue(indicators.macd_histogram, 3),
                                 });
                               }
                               
                               if (indicators.bb_upper) {
                                 items.push({
-                                  label: '布林带上轨',
+                                  label: createIndicatorLabel('布林带上轨', 'bb'),
                                   children: `$${formatValue(indicators.bb_upper)}`,
                                 });
                               }
                               
                               if (indicators.bb_middle) {
                                 items.push({
-                                  label: '布林带中轨',
+                                  label: createIndicatorLabel('布林带中轨', 'bb'),
                                   children: `$${formatValue(indicators.bb_middle)}`,
                                 });
                               }
                               
                               if (indicators.bb_lower) {
                                 items.push({
-                                  label: '布林带下轨',
+                                  label: createIndicatorLabel('布林带下轨', 'bb'),
                                   children: `$${formatValue(indicators.bb_lower)}`,
                                 });
                               }
                               
                               if (indicators.volume_ratio !== undefined) {
                                 items.push({
-                                  label: '成交量比率',
+                                  label: createIndicatorLabel('成交量比率', 'volume_ratio'),
                                   children: (
                                 <Space>
                                   <span style={{ fontSize: 16, fontWeight: 600 }}>
@@ -724,7 +840,7 @@ const MainPage = () => {
                               
                               if (indicators.volatility_20 !== undefined) {
                                 items.push({
-                                  label: '波动率',
+                                  label: createIndicatorLabel('波动率', 'volatility'),
                                   children: (
                                 <Space>
                                       <span>{formatValue(indicators.volatility_20)}%</span>
@@ -744,14 +860,14 @@ const MainPage = () => {
                               
                               if (indicators.atr !== undefined) {
                                 items.push({
-                                  label: 'ATR',
+                                  label: createIndicatorLabel('ATR', 'atr'),
                                   children: `$${formatValue(indicators.atr)} (${formatValue(indicators.atr_percent, 1)}%)`,
                                 });
                               }
                               
                               if (indicators.kdj_k !== undefined) {
                                 items.push({
-                                  label: 'KDJ',
+                                  label: createIndicatorLabel('KDJ', 'kdj'),
                                   children: (
                                 <Space direction="vertical" size="small" style={{ width: '100%' }}>
                                   <div>
@@ -778,7 +894,7 @@ const MainPage = () => {
                               
                               if (indicators.williams_r !== undefined) {
                                 items.push({
-                                  label: '威廉%R',
+                                  label: createIndicatorLabel('威廉%R', 'williams_r'),
                                   children: (
                                 <Space>
                                       <span>{formatValue(indicators.williams_r, 1)}</span>
@@ -799,7 +915,7 @@ const MainPage = () => {
                               
                               if (indicators.obv_trend) {
                                 items.push({
-                                  label: 'OBV趋势',
+                                  label: createIndicatorLabel('OBV趋势', 'obv'),
                                   children: indicators.obv_trend === 'up' ? (
                                     indicators.price_change_pct > 0 ? (
                                     <Tag color="success">量价齐升</Tag>
@@ -820,7 +936,7 @@ const MainPage = () => {
                               
                               if (indicators.trend_strength !== undefined) {
                                 items.push({
-                                  label: '趋势强度',
+                                  label: createIndicatorLabel('趋势强度', 'trend_strength'),
                                   children: (
                                 <Space>
                                       {getTrendTag(indicators.trend_direction)}
@@ -1402,6 +1518,8 @@ const MainPage = () => {
                             />
                         </div>
                         )}
+
+
 
                         {/* 关键价位 */}
                         {(analysisResult.indicators.pivot || analysisResult.indicators.pivot_r1 || analysisResult.indicators.resistance_20d_high) && (
