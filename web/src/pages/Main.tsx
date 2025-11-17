@@ -13,11 +13,7 @@ import {
   InputNumber,
   Select,
   AutoComplete,
-  Row,
-  Col,
-  Statistic,
   Descriptions,
-  Alert,
   Spin,
   message,
   Drawer,
@@ -26,7 +22,6 @@ import {
   FloatButton,
   Popover,
   Typography,
-  FormInstance,
 } from 'antd';
 import {
   InboxOutlined,
@@ -61,7 +56,6 @@ import {
 import './Main.css';
 
 const { TabPane } = Tabs;
-const { TextArea } = Input;
 const { Text, Title } = Typography;
 
 interface StockOption {
@@ -90,7 +84,7 @@ const MainPage: React.FC = () => {
   const [aiAnalysisDrawerVisible, setAiAnalysisDrawerVisible] = useState<boolean>(false);
   
   // 热门股票相关状态
-  const [hotStocks, setHotStocks] = useState<HotStock[]>([]);
+  const [, setHotStocks] = useState<HotStock[]>([]);
   const [stockOptions, setStockOptions] = useState<StockOption[]>([]);
   
   // 技术指标解释信息
@@ -517,26 +511,6 @@ const MainPage: React.FC = () => {
     if (rsi > 70) return { color: 'error', text: '超买' };
     return { color: 'default', text: '中性' };
   };
-
-  const data = [
-    {
-      time: '2017-10-24',
-      // 格式为：[open, close, lowest, highest]
-      value: [20, 34, 10, 38],
-    },
-    {
-      time: '2017-10-25',
-      value: [40, 35, 30, 50],
-    },
-    {
-      time: '2017-10-26',
-      value: [31, 38, 33, 44],
-    },
-    {
-      time: '2017-10-27',
-      value: [38, 15, 5, 42],
-    },
-  ];
 
   return (
     <div className="main-page">
