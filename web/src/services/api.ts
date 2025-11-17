@@ -1,7 +1,15 @@
 /**
  * API服务 - 封装所有后端API调用
  */
-import axios from 'axios';
+import axios, { AxiosResponse } from 'axios';
+import {
+  ApiResponse,
+  Position,
+  Order,
+  AnalysisResult,
+  HotStock,
+  IndicatorInfoResponse,
+} from '../types';
 
 // API基础URL
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
@@ -18,14 +26,14 @@ const api = axios.create({
 /**
  * 处理API响应
  */
-const handleResponse = (response) => {
+const handleResponse = <T = any>(response: AxiosResponse<ApiResponse<T>>): ApiResponse<T> => {
   return response.data;
 };
 
 /**
  * 处理API错误
  */
-const handleError = (error) => {
+const handleError = (error: any): never => {
   if (error.response) {
     // 服务器返回了错误状态码
     throw new Error(error.response.data?.message || `请求失败: ${error.response.status}`);
@@ -41,9 +49,9 @@ const handleError = (error) => {
 /**
  * 获取持仓列表
  */
-export const getPositions = async () => {
+export const getPositions = async (): Promise<ApiResponse<Position[]>> => {
   try {
-    const response = await api.get('/api/positions');
+    const response = await api.get<ApiResponse<Position[]>>('/api/positions');
     return handleResponse(response);
   } catch (error) {
     handleError(error);
@@ -54,9 +62,9 @@ export const getPositions = async () => {
 /**
  * 获取订单列表
  */
-export const getOrders = async () => {
+export const getOrders = async (): Promise<ApiResponse<Order[]>> => {
   try {
-    const response = await api.get('/api/orders');
+    const response = await api.get<ApiResponse<Order[]>>('/api/orders');
     return handleResponse(response);
   } catch (error) {
     handleError(error);
@@ -67,9 +75,13 @@ export const getOrders = async () => {
 /**
  * 买入股票
  */
-export const buy = async (symbol, quantity, limitPrice = null) => {
+export const buy = async (
+  symbol: string,
+  quantity: number,
+  limitPrice: number | null = null
+): Promise<ApiResponse> => {
   try {
-    const orderData = {
+    const orderData: any = {
       symbol: symbol.toUpperCase(),
       action: 'BUY',
       quantity: quantity,
@@ -80,7 +92,7 @@ export const buy = async (symbol, quantity, limitPrice = null) => {
       orderData.limit_price = limitPrice;
     }
     
-    const response = await api.post('/api/order', orderData);
+    const response = await api.post<ApiResponse>('/api/order', orderData);
     return handleResponse(response);
   } catch (error) {
     handleError(error);
@@ -91,9 +103,13 @@ export const buy = async (symbol, quantity, limitPrice = null) => {
 /**
  * 卖出股票
  */
-export const sell = async (symbol, quantity, limitPrice = null) => {
+export const sell = async (
+  symbol: string,
+  quantity: number,
+  limitPrice: number | null = null
+): Promise<ApiResponse> => {
   try {
-    const orderData = {
+    const orderData: any = {
       symbol: symbol.toUpperCase(),
       action: 'SELL',
       quantity: quantity,
@@ -104,7 +120,7 @@ export const sell = async (symbol, quantity, limitPrice = null) => {
       orderData.limit_price = limitPrice;
     }
     
-    const response = await api.post('/api/order', orderData);
+    const response = await api.post<ApiResponse>('/api/order', orderData);
     return handleResponse(response);
   } catch (error) {
     handleError(error);
@@ -115,9 +131,9 @@ export const sell = async (symbol, quantity, limitPrice = null) => {
 /**
  * 撤销订单
  */
-export const cancelOrder = async (orderId) => {
+export const cancelOrder = async (orderId: number): Promise<ApiResponse> => {
   try {
-    const response = await api.delete(`/api/order/${orderId}`);
+    const response = await api.delete<ApiResponse>(`/api/order/${orderId}`);
     return handleResponse(response);
   } catch (error) {
     handleError(error);
@@ -127,12 +143,17 @@ export const cancelOrder = async (orderId) => {
 
 /**
  * 技术分析 - 后端会自动检测 Ollama 并执行AI分析
- * @param {string} symbol - 股票代码
- * @param {string} duration - 数据周期，默认 '3 M'
- * @param {string} barSize - K线周期，默认 '1 day'
- * @param {string} model - AI模型名称，默认 'deepseek-v3.1:671b-cloud'（仅在Ollama可用时使用）
+ * @param symbol - 股票代码
+ * @param duration - 数据周期，默认 '3 M'
+ * @param barSize - K线周期，默认 '1 day'
+ * @param model - AI模型名称，默认 'deepseek-v3.1:671b-cloud'（仅在Ollama可用时使用）
  */
-export const analyze = async (symbol, duration = '3 M', barSize = '1 day', model = 'deepseek-v3.1:671b-cloud') => {
+export const analyze = async (
+  symbol: string,
+  duration: string = '3 M',
+  barSize: string = '1 day',
+  model: string = 'deepseek-v3.1:671b-cloud'
+): Promise<AnalysisResult> => {
   try {
     const params = new URLSearchParams({
       duration: duration,
@@ -140,10 +161,13 @@ export const analyze = async (symbol, duration = '3 M', barSize = '1 day', model
       model: model, // 传递模型参数，后端会在Ollama可用时使用
     });
     
-    const response = await api.get(`/api/analyze/${symbol.toUpperCase()}?${params.toString()}`, {
-      timeout: 60000, // AI分析可能需要更长时间
-    });
-    return handleResponse(response);
+    const response = await api.get<AnalysisResult>(
+      `/api/analyze/${symbol.toUpperCase()}?${params.toString()}`,
+      {
+        timeout: 60000, // AI分析可能需要更长时间
+      }
+    );
+    return handleResponse<AnalysisResult>(response) as AnalysisResult;
   } catch (error) {
     handleError(error);
     throw error;
@@ -152,27 +176,34 @@ export const analyze = async (symbol, duration = '3 M', barSize = '1 day', model
 
 /**
  * AI分析 - 兼容接口，实际调用 analyze 函数
- * @param {string} symbol - 股票代码
- * @param {string} duration - 数据周期，默认 '3 M'
- * @param {string} barSize - K线周期，默认 '1 day'
- * @param {string} model - AI模型名称，默认 'deepseek-v3.1:671b-cloud'
+ * @param symbol - 股票代码
+ * @param duration - 数据周期，默认 '3 M'
+ * @param barSize - K线周期，默认 '1 day'
+ * @param model - AI模型名称，默认 'deepseek-v3.1:671b-cloud'
  */
-export const aiAnalyze = async (symbol, duration = '3 M', barSize = '1 day', model = 'deepseek-v3.1:671b-cloud') => {
+export const aiAnalyze = async (
+  symbol: string,
+  duration: string = '3 M',
+  barSize: string = '1 day',
+  model: string = 'deepseek-v3.1:671b-cloud'
+): Promise<AnalysisResult> => {
   // 直接调用统一的 analyze 接口，后端会自动检测 Ollama
   return analyze(symbol, duration, barSize, model);
 };
 
 /**
  * 获取热门股票列表（仅美股）
- * @param {number} limit - 返回数量限制，默认 20
+ * @param limit - 返回数量限制，默认 20
  */
-export const getHotStocks = async (limit = 20) => {
+export const getHotStocks = async (limit: number = 20): Promise<ApiResponse<HotStock[]>> => {
   try {
     const params = new URLSearchParams({
       limit: limit.toString(),
     });
     
-    const response = await api.get(`/api/hot-stocks?${params.toString()}`);
+    const response = await api.get<ApiResponse<HotStock[]>>(
+      `/api/hot-stocks?${params.toString()}`
+    );
     return handleResponse(response);
   } catch (error) {
     handleError(error);
@@ -182,9 +213,9 @@ export const getHotStocks = async (limit = 20) => {
 
 /**
  * 获取技术指标解释和参考范围
- * @param {string} indicator - 指标名称（可选），不提供则返回所有指标信息
+ * @param indicator - 指标名称（可选），不提供则返回所有指标信息
  */
-export const getIndicatorInfo = async (indicator = '') => {
+export const getIndicatorInfo = async (indicator: string = ''): Promise<IndicatorInfoResponse> => {
   try {
     const params = new URLSearchParams();
     if (indicator) {
@@ -195,7 +226,7 @@ export const getIndicatorInfo = async (indicator = '') => {
       ? `/api/indicator-info?${params.toString()}`
       : '/api/indicator-info';
     
-    const response = await api.get(url);
+    const response = await api.get<IndicatorInfoResponse>(url);
     return handleResponse(response);
   } catch (error) {
     handleError(error);

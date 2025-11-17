@@ -1,13 +1,17 @@
 /**
  * 布局组件 - 无顶栏，直接显示内容
  */
-import React from 'react';
+import React, { ReactNode } from 'react';
 import { Layout as AntLayout } from 'antd';
 import './Layout.css';
 
 const { Content } = AntLayout;
 
-const Layout = ({ children }) => {
+interface LayoutProps {
+  children: ReactNode;
+}
+
+const Layout: React.FC<LayoutProps> = ({ children }) => {
   return (
     <AntLayout className="app-layout">
       <Content className="app-content">
@@ -18,3 +22,4 @@ const Layout = ({ children }) => {
 };
 
 export default Layout;
+

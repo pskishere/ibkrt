@@ -9,7 +9,7 @@ import Layout from './components/Layout';
 import MainPage from './pages/Main';
 import './App.css';
 
-function App() {
+const App: React.FC = () => {
   return (
     <ConfigProvider locale={zhCN}>
       <Router>
@@ -22,6 +22,7 @@ function App() {
       </Router>
     </ConfigProvider>
   );
-}
+};
 
 export default App;
+
