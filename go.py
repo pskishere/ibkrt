@@ -11,7 +11,10 @@
 import logging
 import threading
 import time
-from datetime import datetime
+import sqlite3
+import json
+import os
+from datetime import datetime, date
 
 # 第三方库导入
 import requests
@@ -46,6 +49,200 @@ CORS(app)  # 允许跨域请求
 
 # 全局网关实例
 gateway = None
+
+# SQLite 数据库路径
+DB_PATH = 'stock_cache.db'
+
+def init_database():
+    """
+    初始化SQLite数据库，创建分析结果缓存表和股票信息表
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # 创建分析结果缓存表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS analysis_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            duration TEXT NOT NULL,
+            bar_size TEXT NOT NULL,
+            query_date DATE NOT NULL,
+            indicators TEXT NOT NULL,
+            signals TEXT NOT NULL,
+            candles TEXT NOT NULL,
+            ai_analysis TEXT,
+            model TEXT,
+            ai_available INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(symbol, duration, bar_size, query_date)
+        )
+    ''')
+    
+    # 创建股票信息表，用于缓存股票代码和全名
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS stock_info (
+            symbol TEXT PRIMARY KEY,
+            name TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # 创建索引以提高查询速度
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_symbol_duration_bar_date 
+        ON analysis_cache(symbol, duration, bar_size, query_date)
+    ''')
+    
+    conn.commit()
+    conn.close()
+    logger.info("数据库初始化完成")
+
+def get_cached_analysis(symbol, duration, bar_size):
+    """
+    从数据库获取当天的分析结果
+    返回: 如果有当天的数据返回结果字典，否则返回None
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        today = date.today().isoformat()
+        
+        cursor.execute('''
+            SELECT indicators, signals, candles, ai_analysis, model, ai_available
+            FROM analysis_cache
+            WHERE symbol = ? AND duration = ? AND bar_size = ? AND query_date = ?
+        ''', (symbol.upper(), duration, bar_size, today))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            logger.info(f"从缓存获取数据: {symbol}, {duration}, {bar_size}")
+            return {
+                'success': True,
+                'indicators': json.loads(row[0]),
+                'signals': json.loads(row[1]),
+                'candles': json.loads(row[2]),
+                'ai_analysis': row[3],
+                'model': row[4],
+                'ai_available': bool(row[5])
+            }
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"查询缓存失败: {e}")
+        return None
+
+def save_analysis_cache(symbol, duration, bar_size, result):
+    """
+    保存分析结果到数据库
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        today = date.today().isoformat()
+        
+        # 先删除当天的旧数据（如果有）
+        cursor.execute('''
+            DELETE FROM analysis_cache
+            WHERE symbol = ? AND duration = ? AND bar_size = ? AND query_date = ?
+        ''', (symbol.upper(), duration, bar_size, today))
+        
+        # 插入新数据
+        cursor.execute('''
+            INSERT INTO analysis_cache 
+            (symbol, duration, bar_size, query_date, indicators, signals, candles, 
+             ai_analysis, model, ai_available)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            symbol.upper(),
+            duration,
+            bar_size,
+            today,
+            json.dumps(result.get('indicators', {})),
+            json.dumps(result.get('signals', {})),
+            json.dumps(result.get('candles', [])),
+            result.get('ai_analysis'),
+            result.get('model'),
+            1 if result.get('ai_available') else 0
+        ))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"分析结果已缓存: {symbol}, {duration}, {bar_size}")
+    except Exception as e:
+        logger.error(f"保存缓存失败: {e}")
+
+def cleanup_old_cache():
+    """
+    清理非当天的旧数据
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        today = date.today().isoformat()
+        
+        cursor.execute('''
+            DELETE FROM analysis_cache
+            WHERE query_date != ?
+        ''', (today,))
+        
+        deleted_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if deleted_count > 0:
+            logger.info(f"清理了 {deleted_count} 条旧缓存数据")
+    except Exception as e:
+        logger.error(f"清理旧缓存失败: {e}")
+
+def save_stock_info(symbol, name):
+    """
+    保存或更新股票信息（代码和全名）
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # 使用 INSERT OR REPLACE 来更新或插入
+        cursor.execute('''
+            INSERT OR REPLACE INTO stock_info (symbol, name, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        ''', (symbol.upper(), name))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"股票信息已保存: {symbol} - {name}")
+    except Exception as e:
+        logger.error(f"保存股票信息失败: {e}")
+
+def get_stock_name(symbol):
+    """
+    从数据库获取股票全名
+    返回: 股票全名，如果不存在则返回None
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT name FROM stock_info WHERE symbol = ?
+        ''', (symbol.upper(),))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return row[0]
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"查询股票名称失败: {e}")
+        return None
 
 
 class IBGateway(EWrapper, EClient):
@@ -670,7 +867,6 @@ class IBGateway(EWrapper, EClient):
             data = self.historical_data.get(req_id, []).copy()
         
         if data_complete and data:
-            print('获取数据', data)
             logger.info(f"历史数据接收成功: {symbol}, 数据条数: {len(data)}")
         elif data:
             logger.warning(f"历史数据可能不完整: {symbol}, 数据条数: {len(data)}")
@@ -2280,6 +2476,7 @@ def analyze_stock(symbol):
     """
     技术分析 - 计算技术指标并生成买卖信号
     自动检测 Ollama 是否可用，如果可用则自动执行AI分析
+    使用SQLite缓存当天的查询结果，避免重复查询
     
     查询参数:
     - duration: 数据周期 (默认: '3 M')
@@ -2296,13 +2493,63 @@ def analyze_stock(symbol):
     bar_size = request.args.get('bar_size', '1 day')
     model = request.args.get('model', 'deepseek-v3.1:671b-cloud')
     
-    logger.info(f"技术分析: {symbol}, {duration}, {bar_size}")
+    symbol_upper = symbol.upper()
+    
+    # 先检查缓存中是否有当天的数据
+    cached_result = get_cached_analysis(symbol_upper, duration, bar_size)
+    if cached_result:
+        # 如果缓存中有AI分析结果，直接返回
+        if cached_result.get('ai_analysis'):
+            return jsonify(cached_result)
+        # 如果缓存中没有AI分析，但Ollama可用，则执行AI分析并更新缓存
+        if _check_ollama_available():
+            logger.info(f"缓存中有数据但无AI分析，执行AI分析...")
+            try:
+                ai_analysis = _perform_ai_analysis(
+                    symbol_upper, 
+                    cached_result['indicators'], 
+                    cached_result['signals'], 
+                    duration, 
+                    model
+                )
+                cached_result['ai_analysis'] = ai_analysis
+                cached_result['model'] = model
+                cached_result['ai_available'] = True
+                # 更新缓存
+                save_analysis_cache(symbol_upper, duration, bar_size, cached_result)
+            except Exception as e:
+                logger.warning(f"AI分析执行失败: {e}")
+                cached_result['ai_available'] = False
+                cached_result['ai_error'] = str(e)
+        return jsonify(cached_result)
+    
+    logger.info(f"技术分析: {symbol_upper}, {duration}, {bar_size}")
+    
+    # 获取股票信息并保存到数据库
+    try:
+        stock_info = gateway.get_stock_info(symbol_upper)
+        if stock_info:
+            stock_name = None
+            # 处理返回的数据结构
+            if isinstance(stock_info, dict):
+                stock_name = stock_info.get('longName', '')
+            elif isinstance(stock_info, list) and len(stock_info) > 0:
+                # 如果返回的是列表，取第一个
+                stock_data = stock_info[0]
+                if isinstance(stock_data, dict):
+                    stock_name = stock_data.get('longName', '')
+            
+            # 如果有有效的股票名称，保存到数据库
+            if stock_name and stock_name.strip() and stock_name != symbol_upper:
+                save_stock_info(symbol_upper, stock_name.strip())
+    except Exception as e:
+        logger.warning(f"获取股票信息失败: {e}")
     
     # 获取历史K线数据
-    hist_data = gateway.get_historical_data(symbol.upper(), duration, bar_size)
+    hist_data = gateway.get_historical_data(symbol_upper, duration, bar_size)
     
     # 计算技术指标
-    indicators = gateway.calculate_technical_indicators(symbol.upper(), duration, bar_size)
+    indicators = gateway.calculate_technical_indicators(symbol_upper, duration, bar_size)
     
     if not indicators:
         return jsonify({
@@ -2354,7 +2601,7 @@ def analyze_stock(symbol):
     if _check_ollama_available():
         logger.info(f"检测到 Ollama 可用，开始AI分析...")
         try:
-            ai_analysis = _perform_ai_analysis(symbol, indicators, signals, duration, model)
+            ai_analysis = _perform_ai_analysis(symbol_upper, indicators, signals, duration, model)
             result['ai_analysis'] = ai_analysis
             result['model'] = model
             result['ai_available'] = True
@@ -2365,6 +2612,9 @@ def analyze_stock(symbol):
     else:
         logger.info("Ollama 不可用，跳过AI分析")
         result['ai_available'] = False
+    
+    # 保存到缓存
+    save_analysis_cache(symbol_upper, duration, bar_size, result)
     
     return jsonify(result)
 
@@ -2387,55 +2637,61 @@ def ai_analyze_stock(symbol):
 @app.route('/api/hot-stocks', methods=['GET'])
 def get_hot_stocks():
     """
-    获取热门股票代码列表（仅美股）
+    获取热门股票代码列表（从SQLite数据库查询过的股票中获取）
     查询参数:
     - limit: 返回数量限制 (默认: 20)
     """
     limit = int(request.args.get('limit', 20))
     
-    # 定义热门股票列表（仅美股）
-    hot_stocks = [
-        {'symbol': 'AAPL', 'name': 'Apple Inc.', 'category': '科技'},
-        {'symbol': 'MSFT', 'name': 'Microsoft Corporation', 'category': '科技'},
-        {'symbol': 'GOOGL', 'name': 'Alphabet Inc.', 'category': '科技'},
-        {'symbol': 'AMZN', 'name': 'Amazon.com Inc.', 'category': '电商'},
-        {'symbol': 'NVDA', 'name': 'NVIDIA Corporation', 'category': '半导体'},
-        {'symbol': 'META', 'name': 'Meta Platforms Inc.', 'category': '科技'},
-        {'symbol': 'TSLA', 'name': 'Tesla Inc.', 'category': '汽车'},
-        {'symbol': 'BRK.B', 'name': 'Berkshire Hathaway Inc.', 'category': '金融'},
-        {'symbol': 'V', 'name': 'Visa Inc.', 'category': '金融'},
-        {'symbol': 'JNJ', 'name': 'Johnson & Johnson', 'category': '医疗'},
-        {'symbol': 'WMT', 'name': 'Walmart Inc.', 'category': '零售'},
-        {'symbol': 'JPM', 'name': 'JPMorgan Chase & Co.', 'category': '金融'},
-        {'symbol': 'MA', 'name': 'Mastercard Inc.', 'category': '金融'},
-        {'symbol': 'PG', 'name': 'Procter & Gamble Co.', 'category': '消费品'},
-        {'symbol': 'UNH', 'name': 'UnitedHealth Group Inc.', 'category': '医疗'},
-        {'symbol': 'HD', 'name': 'The Home Depot Inc.', 'category': '零售'},
-        {'symbol': 'DIS', 'name': 'The Walt Disney Company', 'category': '娱乐'},
-        {'symbol': 'BAC', 'name': 'Bank of America Corp.', 'category': '金融'},
-        {'symbol': 'ADBE', 'name': 'Adobe Inc.', 'category': '科技'},
-        {'symbol': 'NFLX', 'name': 'Netflix Inc.', 'category': '娱乐'},
-        {'symbol': 'CRM', 'name': 'Salesforce.com Inc.', 'category': '科技'},
-        {'symbol': 'PYPL', 'name': 'PayPal Holdings Inc.', 'category': '金融'},
-        {'symbol': 'INTC', 'name': 'Intel Corporation', 'category': '半导体'},
-        {'symbol': 'CMCSA', 'name': 'Comcast Corporation', 'category': '媒体'},
-        {'symbol': 'PFE', 'name': 'Pfizer Inc.', 'category': '医疗'},
-        {'symbol': 'COST', 'name': 'Costco Wholesale Corporation', 'category': '零售'},
-        {'symbol': 'TMO', 'name': 'Thermo Fisher Scientific Inc.', 'category': '医疗'},
-        {'symbol': 'AVGO', 'name': 'Broadcom Inc.', 'category': '半导体'},
-        {'symbol': 'CSCO', 'name': 'Cisco Systems Inc.', 'category': '科技'},
-        {'symbol': 'ABBV', 'name': 'AbbVie Inc.', 'category': '医疗'},
-    ]
-    
-    # 限制返回数量
-    result = hot_stocks[:limit] if limit > 0 else hot_stocks
-    
-    return jsonify({
-        'success': True,
-        'market': 'US',
-        'count': len(result),
-        'stocks': result
-    })
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # 从数据库查询所有不同的股票代码，按查询次数和最近查询时间排序
+        # 同时关联stock_info表获取股票全名
+        cursor.execute('''
+            SELECT 
+                ac.symbol,
+                COUNT(*) as query_count,
+                MAX(ac.created_at) as last_query_time,
+                si.name
+            FROM analysis_cache ac
+            LEFT JOIN stock_info si ON ac.symbol = si.symbol
+            GROUP BY ac.symbol
+            ORDER BY query_count DESC, last_query_time DESC
+            LIMIT ?
+        ''', (limit,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # 构建返回结果
+        hot_stocks = []
+        for row in rows:
+            symbol = row[0]
+            stock_name = row[3] if row[3] else symbol  # 如果有名称就用名称，否则用代码
+            hot_stocks.append({
+                'symbol': symbol,
+                'name': stock_name,
+                'category': '已查询'
+            })
+        
+        # 如果数据库中没有数据，返回空列表
+        return jsonify({
+            'success': True,
+            'market': 'US',
+            'count': len(hot_stocks),
+            'stocks': hot_stocks
+        })
+    except Exception as e:
+        logger.error(f"查询热门股票失败: {e}")
+        # 如果查询失败，返回空列表
+        return jsonify({
+            'success': True,
+            'market': 'US',
+            'count': 0,
+            'stocks': []
+        })
 
 
 @app.route('/api/indicator-info', methods=['GET'])
@@ -2590,16 +2846,292 @@ def get_indicator_info():
             'usage': '结合趋势方向，强度高时顺势操作，强度低时谨慎'
         },
         'pivot': {
-            'name': '枢轴与支撑/压力',
-            'description': '枢轴点用于计算支撑位和压力位',
-            'calculation': 'Pivot = (最高价 + 最低价 + 收盘价) / 3，R1/R2/R3和S1/S2/S3基于枢轴点计算',
+            'name': '枢轴点 Pivot Point',
+            'description': '枢轴点是基于前一交易日的高点、低点和收盘价计算的关键价位，用于预测当日的支撑位和压力位',
+            'calculation': 'Pivot = (最高价 + 最低价 + 收盘价) / 3',
             'reference_range': {
-                '支撑': '接近支撑位关注反弹',
-                '压力': '接近压力位关注回落',
-                '破位': '破位需结合量价确认'
+                '枢轴点': '枢轴点是多空力量的平衡点，价格在枢轴点上方表示偏强，在下方表示偏弱',
+                '支撑位': 'S1、S2、S3是支撑位，价格接近支撑位时可能获得支撑反弹',
+                '压力位': 'R1、R2、R3是压力位，价格接近压力位时可能遇到阻力回落'
             },
-            'interpretation': '接近支撑关注反弹，接近压力关注回落；破位需结合量价确认',
-            'usage': '在支撑位附近寻找买入机会，在压力位附近注意卖出'
+            'interpretation': '枢轴点系统是日内交易常用的技术工具。价格在枢轴点上方表示多头占优，在下方表示空头占优。支撑位和压力位是重要的参考价位，价格接近这些位置时可能出现反弹或回调',
+            'usage': '1) 观察价格与枢轴点的关系：在枢轴点上方看多，在下方看空；2) 在支撑位附近寻找买入机会；3) 在压力位附近注意卖出或减仓；4) 破位需要结合成交量确认'
+        },
+        'pivot_r1': {
+            'name': '压力位R1',
+            'description': 'R1是第一阻力位，基于枢轴点计算，是价格可能遇到阻力的第一个关键价位',
+            'calculation': 'R1 = 2 × Pivot - 最低价',
+            'reference_range': {
+                '阻力': '价格接近R1时可能遇到阻力，需要关注是否能够突破',
+                '突破': '价格突破R1后，下一个阻力位是R2'
+            },
+            'interpretation': 'R1是第一个压力位，价格接近R1时可能遇到阻力。如果价格能够突破R1，通常表示上涨动能较强，可能继续上涨至R2',
+            'usage': '1) 价格接近R1时注意阻力；2) 突破R1是看涨信号；3) 在R1附近可以考虑减仓或设置止损'
+        },
+        'pivot_r2': {
+            'name': '压力位R2',
+            'description': 'R2是第二阻力位，是更强的阻力位，价格突破R1后可能在此遇到阻力',
+            'calculation': 'R2 = Pivot + (最高价 - 最低价)',
+            'reference_range': {
+                '强阻力': 'R2是较强的阻力位，价格突破R2通常表示强势上涨',
+                '回调': '价格在R2附近可能回调'
+            },
+            'interpretation': 'R2是第二个压力位，通常比R1更强。价格突破R2表示上涨动能很强，可能继续上涨至R3',
+            'usage': '1) 价格接近R2时注意强阻力；2) 突破R2是强势看涨信号；3) 在R2附近可以考虑大幅减仓'
+        },
+        'pivot_r3': {
+            'name': '压力位R3',
+            'description': 'R3是第三阻力位，是最强的阻力位，价格很少能够突破R3',
+            'calculation': 'R3 = 最高价 + 2 × (Pivot - 最低价)',
+            'reference_range': {
+                '极强阻力': 'R3是极强的阻力位，价格很少能够突破',
+                '超买': '价格接近R3通常表示超买，可能大幅回调'
+            },
+            'interpretation': 'R3是最强的压力位，价格很少能够突破R3。价格接近R3通常表示超买，可能出现大幅回调',
+            'usage': '1) 价格接近R3时注意极强阻力；2) 在R3附近应该考虑大幅减仓或全部卖出；3) 突破R3是极强势信号，但很少发生'
+        },
+        'pivot_s1': {
+            'name': '支撑位S1',
+            'description': 'S1是第一支撑位，基于枢轴点计算，是价格可能获得支撑的第一个关键价位',
+            'calculation': 'S1 = 2 × Pivot - 最高价',
+            'reference_range': {
+                '支撑': '价格接近S1时可能获得支撑，需要关注是否能够守住',
+                '跌破': '价格跌破S1后，下一个支撑位是S2'
+            },
+            'interpretation': 'S1是第一个支撑位，价格接近S1时可能获得支撑。如果价格跌破S1，通常表示下跌动能较强，可能继续下跌至S2',
+            'usage': '1) 价格接近S1时注意支撑；2) 在S1附近可以考虑买入或加仓；3) 跌破S1是看跌信号'
+        },
+        'pivot_s2': {
+            'name': '支撑位S2',
+            'description': 'S2是第二支撑位，是更强的支撑位，价格跌破S1后可能在此获得支撑',
+            'calculation': 'S2 = Pivot - (最高价 - 最低价)',
+            'reference_range': {
+                '强支撑': 'S2是较强的支撑位，价格在S2附近可能反弹',
+                '继续下跌': '价格跌破S2通常表示弱势下跌'
+            },
+            'interpretation': 'S2是第二个支撑位，通常比S1更强。价格在S2附近可能获得支撑反弹，跌破S2表示下跌动能很强',
+            'usage': '1) 价格接近S2时注意强支撑；2) 在S2附近可以考虑买入；3) 跌破S2是弱势看跌信号'
+        },
+        'pivot_s3': {
+            'name': '支撑位S3',
+            'description': 'S3是第三支撑位，是最强的支撑位，价格很少能够跌破S3',
+            'calculation': 'S3 = 最低价 - 2 × (最高价 - Pivot)',
+            'reference_range': {
+                '极强支撑': 'S3是极强的支撑位，价格很少能够跌破',
+                '超卖': '价格接近S3通常表示超卖，可能大幅反弹'
+            },
+            'interpretation': 'S3是最强的支撑位，价格很少能够跌破S3。价格接近S3通常表示超卖，可能出现大幅反弹',
+            'usage': '1) 价格接近S3时注意极强支撑；2) 在S3附近应该考虑买入；3) 跌破S3是极弱势信号，但很少发生'
+        },
+        'resistance_20d_high': {
+            'name': '20日高点 Resistance',
+            'description': '20日高点是最近20个交易日的最高价，是重要的阻力位',
+            'calculation': '20日高点 = 最近20个交易日的最高价',
+            'reference_range': {
+                '阻力': '价格接近20日高点时可能遇到阻力',
+                '突破': '价格突破20日高点通常表示上涨趋势延续'
+            },
+            'interpretation': '20日高点是重要的阻力位。价格接近20日高点时可能遇到阻力，突破20日高点通常表示上涨趋势延续，是看涨信号',
+            'usage': '1) 价格接近20日高点时注意阻力；2) 突破20日高点是看涨信号；3) 在20日高点附近可以考虑减仓'
+        },
+        'support_20d_low': {
+            'name': '20日低点 Support',
+            'description': '20日低点是最近20个交易日的最低价，是重要的支撑位',
+            'calculation': '20日低点 = 最近20个交易日的最低价',
+            'reference_range': {
+                '支撑': '价格接近20日低点时可能获得支撑',
+                '跌破': '价格跌破20日低点通常表示下跌趋势延续'
+            },
+            'interpretation': '20日低点是重要的支撑位。价格接近20日低点时可能获得支撑，跌破20日低点通常表示下跌趋势延续，是看跌信号',
+            'usage': '1) 价格接近20日低点时注意支撑；2) 在20日低点附近可以考虑买入；3) 跌破20日低点是看跌信号'
+        },
+        'chanlun': {
+            'name': '缠论 Chanlun Theory',
+            'description': '缠论是一种基于价格走势结构的技术分析方法，通过分型、笔、线段、中枢等结构来识别趋势和买卖点',
+            'calculation': '缠论通过识别K线图中的分型点，连接分型形成笔，组合笔形成线段，识别线段重叠形成中枢，最终判断走势类型',
+            'reference_range': {
+                '分型': '分型是缠论的基础结构。顶分型：中间K线的高点最高且低点也最高，表示可能的顶部；底分型：中间K线的低点最低且高点也最低，表示可能的底部。分型需要至少3根K线才能确认',
+                '笔': '笔是连接相邻顶分型和底分型的线段。上涨笔：从底分型到顶分型；下跌笔：从顶分型到底分型。笔必须满足一定的价格幅度（通常至少0.5%）才有效。笔是趋势的基本单位',
+                '线段': '线段是由至少3笔组成的更大结构。上涨线段：整体向上，由上涨笔和下跌笔交替组成；下跌线段：整体向下。线段代表更大级别的趋势',
+                '中枢': '中枢是价格震荡的区间，由至少3个线段的重叠部分形成。中枢上沿：重叠区间的最高价；中枢下沿：重叠区间的最低价。中枢代表多空力量平衡的区域，是重要的支撑和压力位',
+                '走势类型': '上涨：价格整体向上，高点不断抬高，低点也不断抬高；下跌：价格整体向下，高点不断降低，低点也不断降低；盘整：价格在一定区间内震荡，没有明确的趋势方向'
+            },
+            'interpretation': '缠论通过识别价格走势的结构来判断趋势和买卖点。分型是转折点，笔是基本趋势单位，线段是更大级别的趋势，中枢是重要的支撑压力区域。当价格突破中枢时，通常意味着趋势的延续或反转。上涨走势中，回调不破前低是买入机会；下跌走势中，反弹不破前高是卖出机会。盘整走势中，可以在中枢上下沿进行高抛低吸',
+            'usage': '1) 识别分型：寻找顶分型和底分型，这些是潜在的转折点；2) 观察笔的方向：上涨笔和下跌笔的交替可以判断短期趋势；3) 分析线段：线段的方向代表更大级别的趋势，线段结束通常意味着趋势可能反转；4) 关注中枢：中枢是重要的支撑和压力位，价格在中枢内震荡，突破中枢可能意味着趋势延续；5) 判断走势类型：根据走势类型选择操作策略，上涨走势中寻找买入机会，下跌走势中注意风险，盘整走势中高抛低吸；6) 结合其他指标：缠论结构需要结合成交量、MACD等指标来确认信号的有效性'
+        },
+        'fractals': {
+            'name': '缠论-分型 Fractals',
+            'description': '分型是缠论的基础结构，用于识别价格的转折点',
+            'calculation': '顶分型：中间K线的高点 > 前一根K线的高点 且 > 后一根K线的高点，同时中间K线的低点 > 前一根K线的低点 且 > 后一根K线的低点；底分型：中间K线的低点 < 前一根K线的低点 且 < 后一根K线的低点，同时中间K线的高点 < 前一根K线的高点 且 < 后一根K线的高点',
+            'reference_range': {
+                '顶分型': '顶分型出现在上涨趋势中，表示可能的顶部。如果后续价格跌破顶分型的最低点，通常确认顶部形成',
+                '底分型': '底分型出现在下跌趋势中，表示可能的底部。如果后续价格突破底分型的最高点，通常确认底部形成',
+                '确认': '分型需要至少3根K线才能确认，单独的分型可能失效，需要结合后续走势确认'
+            },
+            'interpretation': '分型是价格转折的潜在信号。顶分型表示上涨动能减弱，可能出现回调或反转；底分型表示下跌动能减弱，可能出现反弹或反转。但分型本身不是买卖信号，需要结合笔、线段等更大结构来判断',
+            'usage': '1) 识别分型：在K线图中标记顶分型和底分型；2) 等待确认：分型形成后，等待后续K线确认是否有效；3) 结合笔：分型是笔的起点和终点，通过分型可以识别笔；4) 注意失效：如果后续价格突破分型的高低点，分型可能失效'
+        },
+        'strokes': {
+            'name': '缠论-笔 Strokes',
+            'description': '笔是连接相邻顶分型和底分型的线段，是缠论中趋势的基本单位',
+            'calculation': '笔由两个相邻的分型连接而成。上涨笔：从底分型到顶分型；下跌笔：从顶分型到底分型。笔必须满足一定的价格幅度（通常至少0.5%）才有效',
+            'reference_range': {
+                '上涨笔': '上涨笔表示短期上涨趋势，从底分型开始到顶分型结束。上涨笔的结束通常意味着可能出现回调',
+                '下跌笔': '下跌笔表示短期下跌趋势，从顶分型开始到底分型结束。下跌笔的结束通常意味着可能出现反弹',
+                '笔的长度': '笔的长度（K线数量）和价格幅度可以判断趋势的强度。长笔表示趋势较强，短笔表示趋势较弱'
+            },
+            'interpretation': '笔是趋势的基本单位。上涨笔和下跌笔的交替可以判断短期趋势。连续的上涨笔表示上涨趋势，连续的下跌笔表示下跌趋势。笔的结束通常意味着趋势可能反转或进入盘整',
+            'usage': '1) 识别笔：通过分型连接形成笔；2) 观察笔的方向：上涨笔和下跌笔的交替可以判断短期趋势；3) 判断笔的结束：当新的反向笔形成时，前一笔结束；4) 结合线段：笔是线段的组成部分，通过笔可以识别线段'
+        },
+        'segments': {
+            'name': '缠论-线段 Segments',
+            'description': '线段是由至少3笔组成的更大结构，代表更大级别的趋势',
+            'calculation': '线段由至少3笔组成。上涨线段：整体向上，由上涨笔和下跌笔交替组成，但整体趋势向上；下跌线段：整体向下，由下跌笔和上涨笔交替组成，但整体趋势向下',
+            'reference_range': {
+                '上涨线段': '上涨线段表示更大级别的上涨趋势。上涨线段的结束通常意味着可能出现较大级别的回调或反转',
+                '下跌线段': '下跌线段表示更大级别的下跌趋势。下跌线段的结束通常意味着可能出现较大级别的反弹或反转',
+                '线段结束': '线段的结束通常需要新的反向线段形成来确认。线段结束是重要的趋势转换信号'
+            },
+            'interpretation': '线段代表更大级别的趋势。上涨线段表示中期或长期上涨趋势，下跌线段表示中期或长期下跌趋势。线段的结束通常意味着趋势可能反转，是重要的买卖信号',
+            'usage': '1) 识别线段：通过笔的组合识别线段；2) 判断线段方向：上涨线段和下跌线段的方向代表更大级别的趋势；3) 关注线段结束：线段结束是重要的趋势转换信号，可以寻找买卖机会；4) 结合中枢：线段的重叠可以形成中枢'
+        },
+        'central_banks': {
+            'name': '缠论-中枢 Central Banks',
+            'description': '中枢是价格震荡的区间，由至少3个线段的重叠部分形成，是重要的支撑和压力位',
+            'calculation': '中枢由至少3个线段的重叠部分形成。中枢上沿：重叠区间的最高价；中枢下沿：重叠区间的最低价；中枢中心：上沿和下沿的平均值；中枢宽度：上沿和下沿的差值',
+            'reference_range': {
+                '中枢上沿': '中枢上沿是重要的压力位。价格接近或触及上沿时，可能遇到阻力',
+                '中枢下沿': '中枢下沿是重要的支撑位。价格接近或触及下沿时，可能获得支撑',
+                '中枢中心': '中枢中心是多空力量的平衡点。价格在中枢中心附近震荡，表示多空力量平衡',
+                '中枢宽度': '中枢宽度表示震荡的幅度。宽度越大，震荡幅度越大；宽度越小，震荡幅度越小',
+                '突破中枢': '价格突破中枢上沿，通常意味着上涨趋势延续；价格跌破中枢下沿，通常意味着下跌趋势延续',
+                '回踩中枢': '价格突破中枢后回踩中枢，如果在中枢上沿获得支撑，是买入机会；如果在中枢下沿遇到阻力，是卖出机会'
+            },
+            'interpretation': '中枢是重要的支撑和压力区域。价格在中枢内震荡，表示多空力量平衡。价格突破中枢，通常意味着趋势的延续或反转。中枢的上下沿是重要的支撑和压力位，可以在这些位置寻找买卖机会',
+            'usage': '1) 识别中枢：通过线段的重叠识别中枢；2) 关注中枢上下沿：中枢上下沿是重要的支撑和压力位；3) 观察突破：价格突破中枢可能意味着趋势延续；4) 等待回踩：价格突破中枢后回踩，如果获得支撑或遇到阻力，是买卖机会；5) 结合走势类型：在盘整走势中，可以在中枢上下沿高抛低吸'
+        },
+        'trend_type': {
+            'name': '缠论-走势类型 Trend Type',
+            'description': '走势类型是根据缠论结构判断的整体趋势方向，包括上涨、下跌和盘整',
+            'calculation': '走势类型通过分析线段的方向和中枢的位置来判断。上涨：高点不断抬高，低点也不断抬高；下跌：高点不断降低，低点也不断降低；盘整：价格在一定区间内震荡，没有明确的趋势方向',
+            'reference_range': {
+                '上涨': '上涨走势中，价格整体向上，高点不断抬高，低点也不断抬高。上涨走势中，回调不破前低是买入机会',
+                '下跌': '下跌走势中，价格整体向下，高点不断降低，低点也不断降低。下跌走势中，反弹不破前高是卖出机会',
+                '盘整': '盘整走势中，价格在一定区间内震荡，没有明确的趋势方向。盘整走势中，可以在区间上下沿高抛低吸',
+                '转换': '走势类型的转换是重要的信号。从上涨转为下跌，或从下跌转为上涨，通常意味着趋势的反转'
+            },
+            'interpretation': '走势类型决定了操作策略。上涨走势中，应该寻找买入机会，回调是买入时机；下跌走势中，应该注意风险，反弹是卖出时机；盘整走势中，可以在区间上下沿高抛低吸。走势类型的转换是重要的趋势反转信号',
+            'usage': '1) 判断走势类型：根据线段方向和中枢位置判断走势类型；2) 选择操作策略：根据走势类型选择相应的操作策略；3) 关注转换：走势类型的转换是重要的趋势反转信号；4) 结合其他指标：走势类型需要结合成交量、MACD等指标来确认'
+        },
+        'fundamental': {
+            'name': '基本面数据 Fundamental Data',
+            'description': '基本面数据反映公司的财务状况、经营业绩和市场估值，用于评估公司的内在价值和投资价值',
+            'calculation': '基本面数据来自公司财务报表和市场数据，包括营收、利润、估值指标等',
+            'reference_range': {
+                '基本信息': '公司名称、交易所、员工数、流通股数等基本信息，用于了解公司的基本概况',
+                '市值与价格': '市值反映公司的市场价值，当前价和52周区间反映价格波动范围',
+                '财务指标': '营收、净利润、EBITDA等反映公司的盈利能力，利润率反映盈利质量',
+                '每股数据': 'EPS、每股净资产、每股现金、每股股息等反映每股股东权益和收益',
+                '估值指标': 'PE、PB、ROE等用于评估公司估值水平和盈利能力',
+                '分析师预测': '目标价、共识评级、预测EPS等反映市场对公司未来的预期'
+            },
+            'interpretation': '基本面数据用于评估公司的内在价值。财务指标反映公司盈利能力，估值指标反映市场对公司价值的认可程度，分析师预测反映市场对公司未来的预期。基本面分析需要结合行业对比和历史趋势来判断',
+            'usage': '1) 评估盈利能力：关注营收、净利润、利润率等指标；2) 评估估值水平：关注PE、PB等估值指标；3) 评估成长性：关注增长率、预测EPS等指标；4) 结合技术分析：基本面分析需要结合技术分析来做出投资决策'
+        },
+        'market_cap': {
+            'name': '市值 Market Capitalization',
+            'description': '市值是公司股票总价值，等于股价乘以流通股数',
+            'calculation': '市值 = 当前股价 × 流通股数',
+            'reference_range': {
+                '大盘股': '市值 > $100亿，通常更稳定，流动性好',
+                '中盘股': '市值 $10亿 - $100亿，成长性和稳定性平衡',
+                '小盘股': '市值 < $10亿，成长潜力大但风险也高'
+            },
+            'interpretation': '市值反映公司的市场价值。大盘股通常更稳定，小盘股成长潜力大但风险高。市值需要结合行业和盈利能力来判断',
+            'usage': '结合行业对比和盈利能力评估市值是否合理'
+        },
+        'pe': {
+            'name': '市盈率 PE Ratio',
+            'description': '市盈率是股价与每股收益的比率，反映投资者愿意为每元收益支付的价格',
+            'calculation': 'PE = 股价 / 每股收益(EPS)',
+            'reference_range': {
+                '低估': 'PE < 15，可能被低估，但需结合成长性判断',
+                '合理': 'PE 15-25，估值相对合理',
+                '高估': 'PE > 25，可能被高估，需关注成长性是否支撑高估值'
+            },
+            'interpretation': 'PE反映市场对公司盈利能力的估值。低PE可能表示低估或增长缓慢，高PE可能表示高估或高成长预期。需要结合行业和成长性来判断',
+            'usage': '1) 结合行业对比：不同行业的PE水平不同；2) 结合成长性：高成长公司可以支撑更高的PE；3) 结合历史PE：对比历史PE水平判断当前估值'
+        },
+        'pb': {
+            'name': '市净率 PB Ratio',
+            'description': '市净率是股价与每股净资产的比率，反映股价相对于账面价值的高低',
+            'calculation': 'PB = 股价 / 每股净资产',
+            'reference_range': {
+                '低估': 'PB < 1，股价低于账面价值，可能被低估',
+                '合理': 'PB 1-3，估值相对合理',
+                '高估': 'PB > 3，股价远高于账面价值，需关注盈利能力是否支撑'
+            },
+            'interpretation': 'PB反映市场对公司净资产的估值。PB < 1可能表示低估，PB > 3可能表示高估。需要结合ROE和行业特点来判断',
+            'usage': '1) 结合ROE：高ROE可以支撑更高的PB；2) 结合行业：不同行业的PB水平不同；3) 结合资产质量：关注资产的实际价值'
+        },
+        'roe': {
+            'name': '净资产收益率 ROE',
+            'description': 'ROE是净利润与净资产的比率，反映公司使用股东资金创造利润的能力',
+            'calculation': 'ROE = 净利润 / 净资产 × 100%',
+            'reference_range': {
+                '优秀': 'ROE > 15%，盈利能力优秀',
+                '良好': 'ROE 10-15%，盈利能力良好',
+                '一般': 'ROE < 10%，盈利能力一般'
+            },
+            'interpretation': 'ROE反映公司的盈利能力。高ROE表示公司能够有效使用股东资金创造利润。需要结合行业和可持续性来判断',
+            'usage': '1) 结合行业对比：不同行业的ROE水平不同；2) 关注可持续性：持续的高ROE更有价值；3) 结合PB：高ROE可以支撑更高的PB'
+        },
+        'eps': {
+            'name': '每股收益 EPS',
+            'description': 'EPS是公司净利润除以流通股数，反映每股股票的盈利能力',
+            'calculation': 'EPS = 净利润 / 流通股数',
+            'reference_range': {
+                '增长': 'EPS持续增长表示盈利能力提升',
+                '稳定': 'EPS稳定表示盈利能力稳定',
+                '下降': 'EPS下降表示盈利能力下降'
+            },
+            'interpretation': 'EPS反映每股股票的盈利能力。EPS增长表示公司盈利能力提升，EPS下降表示盈利能力下降。需要结合营收增长来判断',
+            'usage': '1) 关注趋势：EPS的增长趋势比绝对值更重要；2) 结合PE：EPS与PE结合可以判断估值；3) 对比预测：实际EPS与预测EPS对比判断业绩'
+        },
+        'revenue': {
+            'name': '营收 Revenue',
+            'description': '营收是公司销售产品或提供服务获得的收入，反映公司的经营规模',
+            'calculation': '营收 = 销售产品或服务的总收入',
+            'reference_range': {
+                '增长': '营收持续增长表示业务扩张',
+                '稳定': '营收稳定表示业务稳定',
+                '下降': '营收下降表示业务收缩'
+            },
+            'interpretation': '营收反映公司的经营规模。营收增长表示业务扩张，营收下降表示业务收缩。需要结合利润率和行业对比来判断',
+            'usage': '1) 关注趋势：营收的增长趋势很重要；2) 结合利润率：高营收不一定意味着高利润；3) 对比行业：营收增长需要对比行业平均水平'
+        },
+        'profit_margin': {
+            'name': '利润率 Profit Margin',
+            'description': '利润率是净利润与营收的比率，反映公司的盈利质量',
+            'calculation': '利润率 = 净利润 / 营收 × 100%',
+            'reference_range': {
+                '高': '利润率 > 20%，盈利质量高',
+                '中': '利润率 10-20%，盈利质量中等',
+                '低': '利润率 < 10%，盈利质量低'
+            },
+            'interpretation': '利润率反映公司的盈利质量。高利润率表示公司能够将更多营收转化为利润。需要结合行业和成本结构来判断',
+            'usage': '1) 结合行业：不同行业的利润率水平不同；2) 关注趋势：利润率的趋势很重要；3) 对比毛利率：利润率与毛利率对比判断成本控制'
+        },
+        'target_price': {
+            'name': '目标价 Target Price',
+            'description': '目标价是分析师预测的股票未来价格，反映市场对公司未来的预期',
+            'calculation': '目标价基于财务模型和估值方法计算',
+            'reference_range': {
+                '上涨空间': '目标价 > 当前价，有上涨空间',
+                '下跌风险': '目标价 < 当前价，有下跌风险'
+            },
+            'interpretation': '目标价反映市场对公司未来的预期。目标价高于当前价表示分析师看好，低于当前价表示分析师看空。需要结合多个分析师的目标价来判断',
+            'usage': '1) 关注共识：多个分析师的目标价共识更有参考价值；2) 结合评级：目标价与评级结合判断；3) 关注更新：目标价会随业绩更新'
         }
     }
     
@@ -2660,6 +3192,12 @@ def main():
     启动API服务
     """
     global gateway
+    
+    # 初始化数据库
+    init_database()
+    
+    # 清理旧缓存
+    cleanup_old_cache()
     
     port = 8080
     logger.info(f"API服务启动 http://0.0.0.0:{port}")

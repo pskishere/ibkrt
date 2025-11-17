@@ -2,6 +2,7 @@
   max-width: 1400px;
   margin: 0 auto;
   background: #fff;
+  width: 100%;
 }
 
 /* 确保整个页面背景为白色 */
@@ -19,6 +20,98 @@
   margin-bottom: 16px;
   border-bottom: 2px solid #e8e8e8;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* 移动端响应式样式 */
+@media (max-width: 768px) {
+  .main-page {
+    max-width: 100%;
+  }
+
+  .main-page .fixed-top {
+    padding: 8px 8px;
+  }
+
+  /* 表单在移动端垂直布局 */
+  .main-page .ant-form-inline {
+    flex-direction: column;
+    align-items: stretch !important;
+  }
+
+  .main-page .ant-form-inline .ant-form-item {
+    margin-right: 0 !important;
+    margin-bottom: 12px;
+  }
+
+  /* 输入框在移动端全宽 */
+  .main-page .ant-form-inline .ant-form-item .ant-input,
+  .main-page .ant-form-inline .ant-form-item .ant-select-selector {
+    width: 100% !important;
+  }
+
+  /* 按钮在移动端全宽 */
+  .main-page .ant-form-inline .ant-form-item .ant-btn {
+    width: 100%;
+  }
+
+  /* 分析结果区域在移动端减少内边距 */
+  .main-page > div:last-child,
+  .main-page .analysis-content {
+    padding: 0 8px !important;
+  }
+
+  /* Descriptions组件在移动端减少列数 */
+  .main-page :global(.ant-descriptions) {
+    font-size: 12px;
+  }
+
+  .main-page :global(.ant-descriptions-item-label) {
+    font-size: 12px;
+    padding: 8px 4px !important;
+  }
+
+  .main-page :global(.ant-descriptions-item-content) {
+    font-size: 12px;
+    padding: 8px 4px !important;
+  }
+
+  /* 表格在移动端可以横向滚动 */
+  .main-page :global(.ant-table-wrapper) {
+    overflow-x: auto;
+  }
+
+  /* K线图在移动端调整高度 */
+  .main-page .tradingview-chart {
+    height: 300px !important;
+  }
+
+  /* 浮动按钮在移动端调整位置 */
+  .main-page :global(.ant-float-btn) {
+    right: 16px !important;
+    bottom: 16px !important;
+  }
+}
+
+/* 小屏幕手机 */
+@media (max-width: 480px) {
+  .main-page .fixed-top {
+    padding: 8px 4px;
+  }
+
+  .main-page > div:last-child,
+  .main-page .analysis-content {
+    padding: 0 4px !important;
+  }
+
+  .main-page :global(.ant-descriptions-title) {
+    font-size: 14px;
+  }
+
+  .main-page :global(.ant-descriptions-item-label),
+  .main-page :global(.ant-descriptions-item-content) {
+    font-size: 11px;
+    padding: 6px 4px !important;
+  }
 }
 
 /* 让 Descriptions 组件列宽根据内容动态调整 */

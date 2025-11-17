@@ -1,7 +1,7 @@
 /**
  * 主页面 - 合并持仓、交易订单、分析功能
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import {
   Table,
@@ -53,6 +53,7 @@ import {
   HotStock,
   IndicatorInfo,
 } from '../types';
+import TradingViewChart from '../components/TradingViewChart';
 import './Main.css';
 
 const { TabPane } = Tabs;
@@ -82,13 +83,20 @@ const MainPage: React.FC = () => {
   const [aiAnalysisResult, setAiAnalysisResult] = useState<AnalysisResult | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState<boolean>(false);
   const [aiAnalysisDrawerVisible, setAiAnalysisDrawerVisible] = useState<boolean>(false);
+  const [currentSymbol, setCurrentSymbol] = useState<string>('');
   
   // 热门股票相关状态
   const [, setHotStocks] = useState<HotStock[]>([]);
   const [stockOptions, setStockOptions] = useState<StockOption[]>([]);
   
+  // 防抖定时器引用
+  const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
+  
   // 技术指标解释信息
   const [indicatorInfoMap, setIndicatorInfoMap] = useState<Record<string, IndicatorInfo>>({});
+  
+  // 响应式状态：检测是否为移动端
+  const [isMobile, setIsMobile] = useState<boolean>(typeof window !== 'undefined' && window.innerWidth <= 768);
 
   /**
    * 加载持仓数据
@@ -220,6 +228,7 @@ const MainPage: React.FC = () => {
         
         // 设置技术分析结果（包含 indicators 和 signals）
         setAnalysisResult(result);
+        setCurrentSymbol(symbol); // 保存当前分析的股票代码
         
         // 如果有AI分析结果，设置AI分析结果
         if (result.ai_analysis) {
@@ -259,6 +268,20 @@ const MainPage: React.FC = () => {
   };
 
   /**
+   * 防抖刷新热门股票列表
+   */
+  const debouncedRefreshHotStocks = (): void => {
+    // 清除之前的定时器
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    // 设置新的定时器，300ms后刷新
+    refreshTimerRef.current = setTimeout(() => {
+      loadHotStocks();
+    }, 300);
+  };
+
+  /**
    * 加载技术指标解释信息
    */
   const loadIndicatorInfo = async (): Promise<void> => {
@@ -282,19 +305,19 @@ const MainPage: React.FC = () => {
 
     return (
       <div style={{ maxWidth: 400, fontSize: 13 }}>
-        <Title level={5} style={{ marginBottom: 8, fontSize: 14 }}>
+        <Title level={5} style={{ marginBottom: 0, fontSize: 14 }}>
           {info.name}
         </Title>
-        <Text style={{ display: 'block', marginBottom: 8 }}>
+        <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
           <strong>说明：</strong>{info.description}
         </Text>
         {info.calculation && (
-          <Text style={{ display: 'block', marginBottom: 8 }}>
+          <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
             <strong>计算方法：</strong>{info.calculation}
           </Text>
         )}
         {info.reference_range && Object.keys(info.reference_range).length > 0 && (
-          <Text style={{ display: 'block', marginBottom: 8 }}>
+          <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
             <strong>参考范围：</strong>
             <ul style={{ marginTop: 4, marginBottom: 0, paddingLeft: 20 }}>
               {Object.entries(info.reference_range).map(([key, value]) => (
@@ -304,12 +327,12 @@ const MainPage: React.FC = () => {
           </Text>
         )}
         {info.interpretation && (
-          <Text style={{ display: 'block', marginBottom: 8 }}>
+          <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
             <strong>解读：</strong>{info.interpretation}
           </Text>
         )}
         {info.usage && (
-          <Text style={{ display: 'block' }}>
+          <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
             <strong>使用方法：</strong>{info.usage}
           </Text>
         )}
@@ -347,10 +370,25 @@ const MainPage: React.FC = () => {
 
   useEffect(() => {
     // 只在组件挂载时加载一次，不自动刷新
-    loadPositions();
-    loadOrders();
+    // loadPositions(); // 已隐藏持仓功能
+    // loadOrders(); // 已隐藏交易功能
     loadHotStocks();
     loadIndicatorInfo();
+    
+    // 监听窗口大小变化，更新移动端状态
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+    };
+    
+    window.addEventListener('resize', handleResize);
+    
+    // 组件卸载时清理定时器和事件监听器
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+      window.removeEventListener('resize', handleResize);
+    };
   }, []);
 
   /**
@@ -517,53 +555,55 @@ const MainPage: React.FC = () => {
       {/* 固定顶部区域：持仓和股票输入框 */}
       <div className="fixed-top">
         <Space direction="vertical" style={{ width: '100%' }} size="large">
-          {/* 持仓部分 - 可折叠 */}
-          <Collapse
-            ghost
-            items={[
-              {
-                key: 'positions',
-                label: (
-                  <span style={{ fontSize: 16, fontWeight: 500 }}>
-                    <InboxOutlined style={{ marginRight: 8 }} />
-                    持仓 ({positions.length})
-                  </span>
-                ),
-                extra: (
-                  <Space onClick={(e) => e.stopPropagation()}>
-                    <Button 
-                      type="primary" 
-                      icon={<DollarOutlined />} 
-                      onClick={() => {
-                        setTradeDrawerVisible(true);
-                        setTradeDrawerTab('trade-form');
-                      }}
-                    >
-                      交易
-                    </Button>
-                    <Button 
-                      icon={<ReloadOutlined />} 
-                      onClick={loadPositions} 
+          {/* 持仓部分 - 已隐藏 */}
+          {false && (
+            <Collapse
+              ghost
+              items={[
+                {
+                  key: 'positions',
+                  label: (
+                    <span style={{ fontSize: 16, fontWeight: 500 }}>
+                      <InboxOutlined style={{ marginRight: 8 }} />
+                      持仓 ({positions.length})
+                    </span>
+                  ),
+                  extra: (
+                    <Space onClick={(e) => e.stopPropagation()}>
+                      <Button 
+                        type="primary" 
+                        icon={<DollarOutlined />} 
+                        onClick={() => {
+                          setTradeDrawerVisible(true);
+                          setTradeDrawerTab('trade-form');
+                        }}
+                      >
+                        交易
+                      </Button>
+                      <Button 
+                        icon={<ReloadOutlined />} 
+                        onClick={loadPositions} 
+                        loading={positionsLoading}
+                      >
+                        刷新
+                      </Button>
+                    </Space>
+                  ),
+                  children: (
+                    <Table
+                      columns={positionColumns}
+                      dataSource={positions}
+                      rowKey={(record, index) => record.symbol || String(index || 0)}
                       loading={positionsLoading}
-                    >
-                      刷新
-                    </Button>
-                  </Space>
-                ),
-                children: (
-                  <Table
-                    columns={positionColumns}
-                    dataSource={positions}
-                    rowKey={(record, index) => record.symbol || String(index || 0)}
-                    loading={positionsLoading}
-                    pagination={{ pageSize: 5 }}
-                    locale={{ emptyText: '暂无持仓' }}
-                    size="small"
-                  />
-                ),
-              },
-            ]}
-          />
+                      pagination={{ pageSize: 5 }}
+                      locale={{ emptyText: '暂无持仓' }}
+                      size="small"
+                    />
+                  ),
+                },
+              ]}
+            />
+          )}
 
           {/* 股票输入框 */}
           <div>
@@ -576,18 +616,18 @@ const MainPage: React.FC = () => {
                 barSize: '1 day',
                 model: 'deepseek-v3.1:671b-cloud',
               }}
-              style={{ marginBottom: 0 }}
+              style={{ marginBottom: 0, width: '100%' }}
             >
               <Form.Item
                 label="股票代码"
                 name="symbol"
                 rules={[{ required: true, message: '请输入股票代码' }]}
-                style={{ marginBottom: 0 }}
+                style={{ marginBottom: 0, flex: 1, minWidth: 200 }}
               >
                 <AutoComplete
                   options={stockOptions}
                   placeholder="例如: AAPL"
-                  style={{ width: 200 }}
+                  style={{ width: '100%', maxWidth: 350 }}
                   filterOption={(inputValue, option) =>
                     option?.value?.toUpperCase().indexOf(inputValue.toUpperCase()) !== -1 ||
                     option?.label?.toUpperCase().indexOf(inputValue.toUpperCase()) !== -1
@@ -597,6 +637,12 @@ const MainPage: React.FC = () => {
                   }}
                   onChange={(value) => {
                     analyzeForm.setFieldsValue({ symbol: value.toUpperCase() });
+                    // 每次输入时防抖刷新热门股票列表
+                    debouncedRefreshHotStocks();
+                  }}
+                  onFocus={() => {
+                    // 获得焦点时立即刷新一次列表
+                    loadHotStocks();
                   }}
                 />
               </Form.Item>
@@ -605,6 +651,7 @@ const MainPage: React.FC = () => {
                   type="primary" 
                   htmlType="submit" 
                   loading={analysisLoading}
+                  style={{ width: '100%', minWidth: 100 }}
                 >
                   开始分析
                 </Button>
@@ -615,7 +662,7 @@ const MainPage: React.FC = () => {
       </div>
 
       {/* 分析结果区域 */}
-      <div style={{ padding: '0 16px', background: '#fff' }}>
+      <div style={{ padding: '0 16px', background: '#fff' }} className="analysis-content">
 
             {analysisLoading && (
               <div style={{ textAlign: 'center', padding: '40px 0' }}>
@@ -639,7 +686,7 @@ const MainPage: React.FC = () => {
                               </span>
                             }
                             bordered 
-                            column={4}
+                            column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
                             size="middle"
                             layout="vertical"
                             items={[
@@ -686,68 +733,104 @@ const MainPage: React.FC = () => {
                           />
                         </div>
 
-                        {/* 移动平均线 */}
-                        {[5, 10, 20, 50].some(p => analysisResult.indicators[`ma${p}`] !== undefined) && (
-                          <div style={{ marginTop: 24 }}>
-                            <Descriptions 
-                              title={
-                                <span>
+                        {/* K线图 */}
+                        {currentSymbol && (
+                          <div style={{ marginTop: 24, overflowX: 'auto' }}>
+                            <div style={{ 
+                              fontSize: '16px', 
+                              fontWeight: 500, 
+                              marginBottom: '16px',
+                              display: 'flex',
+                              alignItems: 'center',
+                            }}>
                               <BarChartOutlined style={{ marginRight: 8 }} />
-                              {createIndicatorLabel('移动平均线', 'ma')}
-                                </span>
-                              }
-                              bordered 
-                              column={4}
-                              size="middle"
-                              layout="vertical"
-                              items={[5, 10, 20, 50]
-                                .map((period) => {
-                                const key = `ma${period}`;
-                                const value = analysisResult.indicators[key];
-                                if (value === undefined) return null as any;
-                                const currentPrice = analysisResult.indicators.current_price || 0;
-                                const diff = ((currentPrice - value) / value * 100);
-                                  return {
-                                    label: `MA${period}`,
-                                    span: 1,
-                                    children: (
-                                    <Space>
-                                      <span style={{
-                                        fontSize: 16,
-                                        fontWeight: 600,
-                                        color: diff >= 0 ? '#3f8600' : '#cf1322',
-                                      }}>
-                                        ${formatValue(value)}
-                                      </span>
-                                      <span style={{
-                                        fontSize: 14,
-                                        color: diff >= 0 ? '#3f8600' : '#cf1322',
-                                      }}>
-                                        ({diff >= 0 ? '+' : ''}{diff.toFixed(1)}%)
-                                      </span>
-                                    </Space>
-                                    ),
-                                  };
-                                })
-                                .filter(item => item !== null)}
-                            />
+                              K线图 - {currentSymbol}
+                            </div>
+                            <div style={{ minWidth: '100%', width: '100%' }}>
+                              <TradingViewChart 
+                                symbol={currentSymbol}
+                                height={isMobile ? 300 : 500}
+                                theme="light"
+                                indicators={analysisResult?.indicators}
+                                candles={analysisResult?.candles}
+                              />
+                            </div>
                           </div>
                         )}
 
+                        {/* 移动平均线 */}
+                        {[5, 10, 20, 50].some(p => analysisResult.indicators[`ma${p}`] !== undefined) && (
+                          <Collapse
+                            ghost
+                            items={[{
+                              key: 'ma',
+                              label: (
+                                <span>
+                                  <BarChartOutlined style={{ marginRight: 8 }} />
+                                  {createIndicatorLabel('移动平均线', 'ma')}
+                                </span>
+                              ),
+                              children: (
+                                <Descriptions 
+                                  bordered 
+                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                  size="middle"
+                                  layout="vertical"
+                                  items={[5, 10, 20, 50]
+                                    .map((period) => {
+                                    const key = `ma${period}`;
+                                    const value = analysisResult.indicators[key];
+                                    if (value === undefined) return null as any;
+                                    const currentPrice = analysisResult.indicators.current_price || 0;
+                                    const diff = ((currentPrice - value) / value * 100);
+                                      return {
+                                        label: `MA${period}`,
+                                        span: 1,
+                                        children: (
+                                        <Space>
+                                          <span style={{
+                                            fontSize: 16,
+                                            fontWeight: 600,
+                                            color: diff >= 0 ? '#3f8600' : '#cf1322',
+                                          }}>
+                                            ${formatValue(value)}
+                                          </span>
+                                          <span style={{
+                                            fontSize: 14,
+                                            color: diff >= 0 ? '#3f8600' : '#cf1322',
+                                          }}>
+                                            ({diff >= 0 ? '+' : ''}{diff.toFixed(1)}%)
+                                          </span>
+                                        </Space>
+                                        ),
+                                      };
+                                    })
+                                    .filter(item => item !== null)}
+                                />
+                              ),
+                            }]}
+                            style={{ marginTop: 24 }}
+                          />
+                        )}
+
                         {/* 技术指标 */}
-                        <div style={{ marginTop: 24 }}>
-                          <Descriptions 
-                            title={
+                        <Collapse
+                          ghost
+                          items={[{
+                            key: 'indicators',
+                            label: (
                               <span>
-                            <BarChartOutlined style={{ marginRight: 8 }} />
-                            技术指标
+                                <BarChartOutlined style={{ marginRight: 8 }} />
+                                技术指标
                               </span>
-                            }
-                            bordered 
-                            column={4}
-                            size="middle"
-                            layout="vertical"
-                            items={(() => {
+                            ),
+                            children: (
+                              <Descriptions 
+                                bordered 
+                                column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                size="middle"
+                                layout="vertical"
+                                items={(() => {
                               const items = [];
                               const indicators = analysisResult.indicators;
                               
@@ -984,34 +1067,42 @@ const MainPage: React.FC = () => {
                               
                               return items;
                             })()}
-                          />
-                        </div>
+                              />
+                            ),
+                          }]}
+                          style={{ marginTop: 24 }}
+                        />
 
                         {/* 基本面数据 */}
                         {analysisResult.indicators.fundamental_data && 
                          typeof analysisResult.indicators.fundamental_data === 'object' &&
                          !analysisResult.indicators.fundamental_data.raw_xml &&
                          Object.keys(analysisResult.indicators.fundamental_data).length > 0 && (
-                          <div style={{ marginTop: 24 }}>
-                            <Descriptions 
-                              title={
+                          <Collapse
+                            ghost
+                            defaultActiveKey={[]}
+                            items={[{
+                              key: 'fundamental',
+                              label: (
                                 <span>
                                   <BarChartOutlined style={{ marginRight: 8 }} />
                                   基本面数据
                                 </span>
-                              }
-                              bordered 
-                              column={4}
-                              size="middle"
-                              layout="vertical"
-                              items={(() => {
+                              ),
+                              children: (
+                                <Descriptions 
+                                  bordered 
+                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                  size="middle"
+                                  layout="vertical"
+                                  items={(() => {
                                 const items = [];
                                 const fd = analysisResult.indicators.fundamental_data;
                                 
                                 // 基本信息
                                 if (fd.CompanyName) {
                                   items.push({
-                                    label: '公司名称',
+                                    label: createIndicatorLabel('公司名称', 'fundamental'),
                                     span: 2,
                                     children: fd.CompanyName,
                                   });
@@ -1019,7 +1110,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd.Exchange) {
                                   items.push({
-                                    label: '交易所',
+                                    label: createIndicatorLabel('交易所', 'fundamental'),
                                     span: 1,
                                     children: fd.Exchange,
                                   });
@@ -1027,7 +1118,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd.Employees) {
                                   items.push({
-                                    label: '员工数',
+                                    label: createIndicatorLabel('员工数', 'fundamental'),
                                     span: 1,
                                     children: `${fd.Employees}人`,
                                   });
@@ -1044,7 +1135,7 @@ const MainPage: React.FC = () => {
                                     sharesText = shares.toFixed(0);
                                   }
                                   items.push({
-                                    label: '流通股数',
+                                    label: createIndicatorLabel('流通股数', 'fundamental'),
                                     span: 1,
                                     children: sharesText,
                                   });
@@ -1064,7 +1155,7 @@ const MainPage: React.FC = () => {
                                     mcapText = `$${mcap.toFixed(2)}`;
                                   }
                                   items.push({
-                                    label: '市值',
+                                    label: createIndicatorLabel('市值', 'market_cap'),
                                     span: 1,
                                     children: mcapText,
                                   });
@@ -1072,7 +1163,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd.Price) {
                                   items.push({
-                                    label: '当前价',
+                                    label: createIndicatorLabel('当前价', 'fundamental'),
                                     span: 1,
                                     children: `$${formatValue(fd.Price, 2)}`,
                                   });
@@ -1080,7 +1171,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd['52WeekHigh'] && fd['52WeekLow']) {
                                   items.push({
-                                    label: '52周区间',
+                                    label: createIndicatorLabel('52周区间', 'fundamental'),
                                     span: 2,
                                     children: `$${formatValue(fd['52WeekLow'], 2)} - $${formatValue(fd['52WeekHigh'], 2)}`,
                                   });
@@ -1098,7 +1189,7 @@ const MainPage: React.FC = () => {
                                     revenueText = `$${revenue.toFixed(2)}`;
                                   }
                                   items.push({
-                                    label: '营收(TTM)',
+                                    label: createIndicatorLabel('营收(TTM)', 'revenue'),
                                     span: 1,
                                     children: revenueText,
                                   });
@@ -1115,7 +1206,7 @@ const MainPage: React.FC = () => {
                                     incomeText = `$${income.toFixed(2)}`;
                                   }
                                   items.push({
-                                    label: '净利润(TTM)',
+                                    label: createIndicatorLabel('净利润(TTM)', 'fundamental'),
                                     span: 1,
                                     children: incomeText,
                                   });
@@ -1132,7 +1223,7 @@ const MainPage: React.FC = () => {
                                     ebitdaText = `$${ebitda.toFixed(2)}`;
                                   }
                                   items.push({
-                                    label: 'EBITDA(TTM)',
+                                    label: createIndicatorLabel('EBITDA(TTM)', 'fundamental'),
                                     span: 1,
                                     children: ebitdaText,
                                   });
@@ -1140,7 +1231,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd.ProfitMargin) {
                                   items.push({
-                                    label: '利润率',
+                                    label: createIndicatorLabel('利润率', 'profit_margin'),
                                     span: 1,
                                     children: `${formatValue(parseFloat(fd.ProfitMargin) * 100, 2)}%`,
                                   });
@@ -1148,7 +1239,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd.GrossMargin) {
                                   items.push({
-                                    label: '毛利率',
+                                    label: createIndicatorLabel('毛利率', 'profit_margin'),
                                     span: 1,
                                     children: `${formatValue(parseFloat(fd.GrossMargin) * 100, 2)}%`,
                                   });
@@ -1157,7 +1248,7 @@ const MainPage: React.FC = () => {
                                 // 每股数据
                                 if (fd.EPS) {
                                   items.push({
-                                    label: '每股收益(EPS)',
+                                    label: createIndicatorLabel('每股收益(EPS)', 'eps'),
                                     span: 1,
                                     children: `$${formatValue(fd.EPS, 2)}`,
                                   });
@@ -1165,7 +1256,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd.BookValuePerShare) {
                                   items.push({
-                                    label: '每股净资产',
+                                    label: createIndicatorLabel('每股净资产', 'fundamental'),
                                     span: 1,
                                     children: `$${formatValue(fd.BookValuePerShare, 2)}`,
                                   });
@@ -1173,7 +1264,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd.CashPerShare) {
                                   items.push({
-                                    label: '每股现金',
+                                    label: createIndicatorLabel('每股现金', 'fundamental'),
                                     span: 1,
                                     children: `$${formatValue(fd.CashPerShare, 2)}`,
                                   });
@@ -1181,7 +1272,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd.DividendPerShare) {
                                   items.push({
-                                    label: '每股股息',
+                                    label: createIndicatorLabel('每股股息', 'fundamental'),
                                     span: 1,
                                     children: `$${formatValue(fd.DividendPerShare, 3)}`,
                                   });
@@ -1191,7 +1282,7 @@ const MainPage: React.FC = () => {
                                 if (fd.PE) {
                                   const pe = parseFloat(fd.PE);
                                   items.push({
-                                    label: '市盈率(PE)',
+                                    label: createIndicatorLabel('市盈率(PE)', 'pe'),
                                     span: 1,
                                     children: (
                                       <Space>
@@ -1211,7 +1302,7 @@ const MainPage: React.FC = () => {
                                 if (fd.PriceToBook) {
                                   const pb = parseFloat(fd.PriceToBook);
                                   items.push({
-                                    label: '市净率(PB)',
+                                    label: createIndicatorLabel('市净率(PB)', 'pb'),
                                     span: 1,
                                     children: (
                                       <Space>
@@ -1231,7 +1322,7 @@ const MainPage: React.FC = () => {
                                 if (fd.ROE) {
                                   const roe = parseFloat(fd.ROE) * 100;
                                   items.push({
-                                    label: '净资产收益率(ROE)',
+                                    label: createIndicatorLabel('净资产收益率(ROE)', 'roe'),
                                     span: 1,
                                     children: (
                                       <Space>
@@ -1254,7 +1345,7 @@ const MainPage: React.FC = () => {
                                   const currentPrice = parseFloat(fd.Price || analysisResult.indicators.current_price || 0);
                                   const upside = currentPrice > 0 ? ((target - currentPrice) / currentPrice * 100) : 0;
                                   items.push({
-                                    label: '目标价',
+                                    label: createIndicatorLabel('目标价', 'target_price'),
                                     span: 1,
                                     children: (
                                       <Space>
@@ -1280,7 +1371,7 @@ const MainPage: React.FC = () => {
                                   };
                                   const config = consensusMap[String(consensus)] || { text: String(consensus), color: 'default' };
                                   items.push({
-                                    label: '共识评级',
+                                    label: createIndicatorLabel('共识评级', 'fundamental'),
                                     span: 1,
                                     children: <Tag color={config.color}>{config.text}</Tag>,
                                   });
@@ -1288,7 +1379,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd.ProjectedEPS) {
                                   items.push({
-                                    label: '预测EPS',
+                                    label: createIndicatorLabel('预测EPS', 'eps'),
                                     span: 1,
                                     children: `$${formatValue(fd.ProjectedEPS, 2)}`,
                                   });
@@ -1296,7 +1387,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (fd.ProjectedGrowthRate) {
                                   items.push({
-                                    label: '预测增长率',
+                                    label: createIndicatorLabel('预测增长率', 'fundamental'),
                                     span: 1,
                                     children: `${formatValue(parseFloat(fd.ProjectedGrowthRate) * 100, 2)}%`,
                                   });
@@ -1304,31 +1395,38 @@ const MainPage: React.FC = () => {
                                 
                                 return items;
                               })()}
-                            />
-                        </div>
+                                />
+                              ),
+                            }]}
+                            style={{ marginTop: 24 }}
+                          />
                         )}
 
                         {/* 缠论分析 */}
                         {(analysisResult.indicators.fractals || analysisResult.indicators.strokes || analysisResult.indicators.segments || analysisResult.indicators.central_banks) && (
-                          <div style={{ marginTop: 24 }}>
-                            <Descriptions 
-                              title={
+                          <Collapse
+                            ghost
+                            items={[{
+                              key: 'chanlun',
+                              label: (
                                 <span>
                                   <BarChartOutlined style={{ marginRight: 8 }} />
                                   缠论分析
                                 </span>
-                              }
-                              bordered 
-                              column={4}
-                              size="middle"
-                              layout="vertical"
-                              items={(() => {
+                              ),
+                              children: (
+                                <Descriptions 
+                                  bordered 
+                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                  size="middle"
+                                  layout="vertical"
+                                  items={(() => {
                                 const items = [];
                                 const indicators = analysisResult.indicators;
                                 
                                 if (indicators.trend_type) {
                                   items.push({
-                                    label: '走势类型',
+                                    label: createIndicatorLabel('走势类型', 'trend_type'),
                                     span: 1,
                                     children: (
                                       <Tag color={
@@ -1344,7 +1442,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.fractal_count) {
                                   items.push({
-                                    label: '分型数量',
+                                    label: createIndicatorLabel('分型数量', 'fractals'),
                                     span: 1,
                                     children: (
                                       <Space>
@@ -1357,7 +1455,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.stroke_count !== undefined) {
                                   items.push({
-                                    label: '笔数量',
+                                    label: createIndicatorLabel('笔数量', 'strokes'),
                                     span: 1,
                                     children: indicators.stroke_count,
                                   });
@@ -1365,7 +1463,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.segment_count !== undefined) {
                                   items.push({
-                                    label: '线段数量',
+                                    label: createIndicatorLabel('线段数量', 'segments'),
                                     span: 1,
                                     children: indicators.segment_count,
                                   });
@@ -1373,7 +1471,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.central_bank_count !== undefined) {
                                   items.push({
-                                    label: '中枢数量',
+                                    label: createIndicatorLabel('中枢数量', 'central_banks'),
                                     span: 1,
                                     children: indicators.central_bank_count,
                                   });
@@ -1381,7 +1479,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.latest_stroke) {
                                   items.push({
-                                    label: '最新笔',
+                                    label: createIndicatorLabel('最新笔', 'strokes'),
                                     span: 2,
                                     children: (
                                       <Space>
@@ -1403,7 +1501,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.latest_segment) {
                                   items.push({
-                                    label: '最新线段',
+                                    label: createIndicatorLabel('最新线段', 'segments'),
                                     span: 2,
                                     children: (
                                       <Space>
@@ -1425,7 +1523,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.latest_central_bank) {
                                   items.push({
-                                    label: '最新中枢',
+                                    label: createIndicatorLabel('最新中枢', 'central_banks'),
                                     span: 4,
                                     children: (
                                       <Space>
@@ -1447,7 +1545,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.latest_top_fractal) {
                                   items.push({
-                                    label: '最新顶分型',
+                                    label: createIndicatorLabel('最新顶分型', 'fractals'),
                                     span: 2,
                                     children: (
                                       <Space>
@@ -1464,7 +1562,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.latest_bottom_fractal) {
                                   items.push({
-                                    label: '最新底分型',
+                                    label: createIndicatorLabel('最新底分型', 'fractals'),
                                     span: 2,
                                     children: (
                                       <Space>
@@ -1514,33 +1612,40 @@ const MainPage: React.FC = () => {
                                 
                                 return items;
                               })()}
-                            />
-                        </div>
+                                />
+                              ),
+                            }]}
+                            style={{ marginTop: 24 }}
+                          />
                         )}
 
 
 
                         {/* 关键价位 */}
                         {(analysisResult.indicators.pivot || analysisResult.indicators.pivot_r1 || analysisResult.indicators.resistance_20d_high) && (
-                          <div style={{ marginTop: 24 }}>
-                            <Descriptions 
-                              title={
+                          <Collapse
+                            ghost
+                            items={[{
+                              key: 'pivot',
+                              label: (
                                 <span>
-                              <BarChartOutlined style={{ marginRight: 8 }} />
-                              关键价位
+                                  <BarChartOutlined style={{ marginRight: 8 }} />
+                                  关键价位
                                 </span>
-                              }
-                            bordered 
-                            column={4}
-                            size="middle"
-                              layout="vertical"
-                              items={(() => {
+                              ),
+                              children: (
+                                <Descriptions 
+                                  bordered 
+                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                  size="middle"
+                                  layout="vertical"
+                                  items={(() => {
                                 const items = [];
                                 const indicators = analysisResult.indicators;
                                 
                                 if (indicators.pivot) {
                                   items.push({
-                                    label: '枢轴点',
+                                    label: createIndicatorLabel('枢轴点', 'pivot'),
                                     children: (
                                   <span style={{ fontSize: 16, fontWeight: 600 }}>
                                         ${formatValue(indicators.pivot)}
@@ -1551,7 +1656,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.pivot_r1) {
                                   items.push({
-                                    label: '压力位R1',
+                                    label: createIndicatorLabel('压力位R1', 'pivot_r1'),
                                     children: (
                                   <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
                                         ${formatValue(indicators.pivot_r1)}
@@ -1562,7 +1667,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.pivot_r2) {
                                   items.push({
-                                    label: '压力位R2',
+                                    label: createIndicatorLabel('压力位R2', 'pivot_r2'),
                                     children: (
                                   <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
                                         ${formatValue(indicators.pivot_r2)}
@@ -1573,7 +1678,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.pivot_r3) {
                                   items.push({
-                                    label: '压力位R3',
+                                    label: createIndicatorLabel('压力位R3', 'pivot_r3'),
                                     children: (
                                   <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
                                         ${formatValue(indicators.pivot_r3)}
@@ -1584,7 +1689,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.pivot_s1) {
                                   items.push({
-                                    label: '支撑位S1',
+                                    label: createIndicatorLabel('支撑位S1', 'pivot_s1'),
                                     children: (
                                   <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
                                         ${formatValue(indicators.pivot_s1)}
@@ -1595,7 +1700,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.pivot_s2) {
                                   items.push({
-                                    label: '支撑位S2',
+                                    label: createIndicatorLabel('支撑位S2', 'pivot_s2'),
                                     children: (
                                   <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
                                         ${formatValue(indicators.pivot_s2)}
@@ -1606,7 +1711,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.pivot_s3) {
                                   items.push({
-                                    label: '支撑位S3',
+                                    label: createIndicatorLabel('支撑位S3', 'pivot_s3'),
                                     children: (
                                   <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
                                         ${formatValue(indicators.pivot_s3)}
@@ -1617,7 +1722,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.resistance_20d_high) {
                                   items.push({
-                                    label: '20日高点',
+                                    label: createIndicatorLabel('20日高点', 'resistance_20d_high'),
                                     children: (
                                   <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
                                         ${formatValue(indicators.resistance_20d_high)}
@@ -1628,7 +1733,7 @@ const MainPage: React.FC = () => {
                                 
                                 if (indicators.support_20d_low) {
                                   items.push({
-                                    label: '20日低点',
+                                    label: createIndicatorLabel('20日低点', 'support_20d_low'),
                                     children: (
                                   <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
                                         ${formatValue(indicators.support_20d_low)}
@@ -1639,25 +1744,32 @@ const MainPage: React.FC = () => {
                                 
                                 return items;
                               })()}
-                            />
-                          </div>
+                                />
+                              ),
+                            }]}
+                            style={{ marginTop: 24 }}
+                          />
                         )}
 
                         {/* 交易信号 */}
                         {analysisResult.signals && (
-                          <div style={{ marginTop: 24 }}>
-                            <Descriptions 
-                              title={
+                          <Collapse
+                            ghost
+                            items={[{
+                              key: 'signals',
+                              label: (
                                 <span>
-                              <BarChartOutlined style={{ marginRight: 8 }} />
-                              交易信号
+                                  <BarChartOutlined style={{ marginRight: 8 }} />
+                                  交易信号
                                 </span>
-                              }
-                              bordered 
-                              column={{ xxl: 3, xl: 3, lg: 2, md: 2, sm: 1, xs: 1 }} 
-                              size="middle"
-                              layout="vertical"
-                              items={(() => {
+                              ),
+                              children: (
+                                <Descriptions 
+                                  bordered 
+                                  column={{ xxl: 3, xl: 3, lg: 2, md: 2, sm: 1, xs: 1 }} 
+                                  size="middle"
+                                  layout="vertical"
+                                  items={(() => {
                                 const items = [];
                                 const signals = analysisResult.signals;
                                 const indicators = analysisResult.indicators;
@@ -1770,8 +1882,11 @@ const MainPage: React.FC = () => {
                                 
                                 return items;
                               })()}
-                            />
-                          </div>
+                                />
+                              ),
+                            }]}
+                            style={{ marginTop: 24 }}
+                          />
                         )}
                     </div>
                   )}
@@ -1781,19 +1896,20 @@ const MainPage: React.FC = () => {
             )}
       </div>
 
-      {/* 交易抽屉 */}
-      <Drawer
-        title={
-          <span>
-            <DollarOutlined style={{ marginRight: 8 }} />
-            交易
-          </span>
-        }
-        placement="right"
-        width={600}
-        onClose={() => setTradeDrawerVisible(false)}
-        open={tradeDrawerVisible}
-      >
+      {/* 交易抽屉 - 已隐藏 */}
+      {false && (
+        <Drawer
+          title={
+            <span>
+              <DollarOutlined style={{ marginRight: 8 }} />
+              交易
+            </span>
+          }
+          placement="right"
+          width={600}
+          onClose={() => setTradeDrawerVisible(false)}
+          open={tradeDrawerVisible}
+        >
         <Tabs activeKey={tradeDrawerTab} onChange={setTradeDrawerTab}>
           <TabPane
             tab={
@@ -1921,6 +2037,7 @@ const MainPage: React.FC = () => {
           </TabPane>
         </Tabs>
       </Drawer>
+      )}
 
       {/* AI分析报告抽屉 */}
       <Drawer
