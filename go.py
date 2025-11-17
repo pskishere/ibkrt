@@ -2298,6 +2298,9 @@ def analyze_stock(symbol):
     
     logger.info(f"技术分析: {symbol}, {duration}, {bar_size}")
     
+    # 获取历史K线数据
+    hist_data = gateway.get_historical_data(symbol.upper(), duration, bar_size)
+    
     # 计算技术指标
     indicators = gateway.calculate_technical_indicators(symbol.upper(), duration, bar_size)
     
@@ -2310,11 +2313,41 @@ def analyze_stock(symbol):
     # 生成买卖信号
     signals = gateway.generate_signals(indicators)
     
+    # 格式化K线数据
+    formatted_candles = []
+    if hist_data:
+        for bar in hist_data:
+            date_str = bar.get('date', '')
+            try:
+                # 解析日期格式 "20250818" -> "2025-08-18"
+                if len(date_str) == 8:
+                    dt = datetime.strptime(date_str, '%Y%m%d')
+                    time_str = dt.strftime('%Y-%m-%d')
+                elif ' ' in date_str:
+                    # 处理 "20250818 16:00:00" 格式
+                    dt = datetime.strptime(date_str, '%Y%m%d %H:%M:%S')
+                    time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    time_str = date_str
+            except Exception as e:
+                logger.warning(f"日期解析失败: {date_str}, 错误: {e}")
+                time_str = date_str
+            
+            formatted_candles.append({
+                'time': time_str,
+                'open': float(bar.get('open', 0)),
+                'high': float(bar.get('high', 0)),
+                'low': float(bar.get('low', 0)),
+                'close': float(bar.get('close', 0)),
+                'volume': int(bar.get('volume', 0)),
+            })
+    
     # 构建返回数据
     result = {
         'success': True,
         'indicators': indicators,
-        'signals': signals
+        'signals': signals,
+        'candles': formatted_candles
     }
     
     # 自动检测 Ollama 是否可用，如果可用则执行AI分析

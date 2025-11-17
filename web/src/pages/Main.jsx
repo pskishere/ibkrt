@@ -199,6 +199,18 @@ const MainPage = () => {
 
       // 处理分析结果
       if (result && result.success) {
+        // 打印获取到的数据到console
+        console.log('=== 技术分析数据 ===');
+        console.log('完整结果:', result);
+        console.log('技术指标:', result.indicators);
+        console.log('交易信号:', result.signals);
+        console.log('K线数据:', result.candles);
+        console.log('K线数据条数:', result.candles?.length || 0);
+        if (result.ai_analysis) {
+          console.log('AI分析:', result.ai_analysis);
+        }
+        console.log('==================');
+        
         // 设置技术分析结果（包含 indicators 和 signals）
         setAnalysisResult(result);
         
