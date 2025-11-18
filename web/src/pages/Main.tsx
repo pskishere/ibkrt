@@ -763,6 +763,7 @@ const MainPage: React.FC = () => {
                         {[5, 10, 20, 50].some(p => analysisResult.indicators[`ma${p}`] !== undefined) && (
                           <Collapse
                             ghost
+                            defaultActiveKey={['ma']}
                             items={[{
                               key: 'ma',
                               label: (
@@ -817,6 +818,7 @@ const MainPage: React.FC = () => {
                         {/* 技术指标 */}
                         <Collapse
                           ghost
+                          defaultActiveKey={['indicators']}
                           items={[{
                             key: 'indicators',
                             label: (
@@ -1073,6 +1075,496 @@ const MainPage: React.FC = () => {
                           }]}
                           style={{ marginTop: 24 }}
                         />
+
+                        {/* 缠论分析 */}
+                        {(analysisResult.indicators.fractals || analysisResult.indicators.strokes || analysisResult.indicators.segments || analysisResult.indicators.central_banks) && (
+                          <Collapse
+                            ghost
+                            defaultActiveKey={['chanlun']}
+                            items={[{
+                              key: 'chanlun',
+                              label: (
+                                <span>
+                                  <BarChartOutlined style={{ marginRight: 8 }} />
+                                  缠论分析
+                                </span>
+                              ),
+                              children: (
+                                <Descriptions 
+                                  bordered 
+                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                  size="middle"
+                                  layout="vertical"
+                                  items={(() => {
+                                const items = [];
+                                const indicators = analysisResult.indicators;
+                                
+                                if (indicators.trend_type) {
+                                  items.push({
+                                    label: createIndicatorLabel('走势类型', 'trend_type'),
+                                    span: 1,
+                                    children: (
+                                      <Tag color={
+                                        indicators.trend_type === 'up' ? 'success' :
+                                        indicators.trend_type === 'down' ? 'error' : 'default'
+                                      }>
+                                        {indicators.trend_type === 'up' ? '上涨' :
+                                         indicators.trend_type === 'down' ? '下跌' : '盘整'}
+                                      </Tag>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.fractal_count) {
+                                  items.push({
+                                    label: createIndicatorLabel('分型数量', 'fractals'),
+                                    span: 1,
+                                    children: (
+                                      <Space>
+                                        <span>顶分型: {indicators.fractal_count.top || 0}</span>
+                                        <span>底分型: {indicators.fractal_count.bottom || 0}</span>
+                                      </Space>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.stroke_count !== undefined) {
+                                  items.push({
+                                    label: createIndicatorLabel('笔数量', 'strokes'),
+                                    span: 1,
+                                    children: indicators.stroke_count,
+                                  });
+                                }
+                                
+                                if (indicators.segment_count !== undefined) {
+                                  items.push({
+                                    label: createIndicatorLabel('线段数量', 'segments'),
+                                    span: 1,
+                                    children: indicators.segment_count,
+                                  });
+                                }
+                                
+                                if (indicators.central_bank_count !== undefined) {
+                                  items.push({
+                                    label: createIndicatorLabel('中枢数量', 'central_banks'),
+                                    span: 1,
+                                    children: indicators.central_bank_count,
+                                  });
+                                }
+                                
+                                if (indicators.latest_stroke) {
+                                  items.push({
+                                    label: createIndicatorLabel('最新笔', 'strokes'),
+                                    span: 2,
+                                    children: (
+                                      <Space>
+                                        <Tag color={indicators.latest_stroke.type === 'up' ? 'success' : 'error'}>
+                                          {indicators.latest_stroke.type === 'up' ? '上涨笔' : '下跌笔'}
+                                        </Tag>
+                                        <span>
+                                          ${formatValue(indicators.latest_stroke.start_price)} → ${formatValue(indicators.latest_stroke.end_price)}
+                                        </span>
+                                        <span style={{
+                                          color: indicators.latest_stroke.price_change_pct >= 0 ? '#3f8600' : '#cf1322'
+                                        }}>
+                                          ({indicators.latest_stroke.price_change_pct >= 0 ? '+' : ''}{formatValue(indicators.latest_stroke.price_change_pct)}%)
+                                        </span>
+                                      </Space>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.latest_segment) {
+                                  items.push({
+                                    label: createIndicatorLabel('最新线段', 'segments'),
+                                    span: 2,
+                                    children: (
+                                      <Space>
+                                        <Tag color={indicators.latest_segment.type === 'up' ? 'success' : 'error'}>
+                                          {indicators.latest_segment.type === 'up' ? '上涨线段' : '下跌线段'}
+                                        </Tag>
+                                        <span>
+                                          ${formatValue(indicators.latest_segment.start_price)} → ${formatValue(indicators.latest_segment.end_price)}
+                                        </span>
+                                        <span style={{
+                                          color: indicators.latest_segment.price_change_pct >= 0 ? '#3f8600' : '#cf1322'
+                                        }}>
+                                          ({indicators.latest_segment.price_change_pct >= 0 ? '+' : ''}{formatValue(indicators.latest_segment.price_change_pct)}%)
+                                        </span>
+                                      </Space>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.latest_central_bank) {
+                                  items.push({
+                                    label: createIndicatorLabel('最新中枢', 'central_banks'),
+                                    span: 4,
+                                    children: (
+                                      <Space>
+                                        <span>上沿: <strong>${formatValue(indicators.latest_central_bank.high)}</strong></span>
+                                        <span>下沿: <strong>${formatValue(indicators.latest_central_bank.low)}</strong></span>
+                                        <span>中心: <strong>${formatValue(indicators.latest_central_bank.center)}</strong></span>
+                                        <span>宽度: {formatValue(indicators.latest_central_bank.width_pct, 2)}%</span>
+                                        <Tag color={
+                                          indicators.latest_central_bank.position === 'above' ? 'success' :
+                                          indicators.latest_central_bank.position === 'below' ? 'error' : 'default'
+                                        }>
+                                          {indicators.latest_central_bank.position === 'above' ? '上方' :
+                                           indicators.latest_central_bank.position === 'below' ? '下方' : '中枢内'}
+                                        </Tag>
+                                      </Space>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.latest_top_fractal) {
+                                  items.push({
+                                    label: createIndicatorLabel('最新顶分型', 'fractals'),
+                                    span: 2,
+                                    children: (
+                                      <Space>
+                                        <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
+                                          ${formatValue(indicators.latest_top_fractal.price)}
+                                        </span>
+                                        <span style={{ color: '#666' }}>
+                                          距离: {formatValue(indicators.latest_top_fractal.distance_pct, 2)}%
+                                        </span>
+                                      </Space>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.latest_bottom_fractal) {
+                                  items.push({
+                                    label: createIndicatorLabel('最新底分型', 'fractals'),
+                                    span: 2,
+                                    children: (
+                                      <Space>
+                                        <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
+                                          ${formatValue(indicators.latest_bottom_fractal.price)}
+                                        </span>
+                                        <span style={{ color: '#666' }}>
+                                          距离: {formatValue(indicators.latest_bottom_fractal.distance_pct, 2)}%
+                                        </span>
+                                      </Space>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.trading_points) {
+                                  items.push({
+                                    label: '买卖点',
+                                    span: 4,
+                                    children: (
+                                      <Space wrap>
+                                        {indicators.trading_points.buy_points && indicators.trading_points.buy_points.length > 0 && (
+                                          <>
+                                            {indicators.trading_points.buy_points.map((point: any, index: number) => (
+                                              <Tag key={`buy-${index}`} color="success">
+                                                {point.type}: ${formatValue(point.price)}
+                                              </Tag>
+                                            ))}
+                                          </>
+                                        )}
+                                        {indicators.trading_points.sell_points && indicators.trading_points.sell_points.length > 0 && (
+                                          <>
+                                            {indicators.trading_points.sell_points.map((point: any, index: number) => (
+                                              <Tag key={`sell-${index}`} color="error">
+                                                {point.type}: ${formatValue(point.price)}
+                                              </Tag>
+                                            ))}
+                                          </>
+                                        )}
+                                        {(!indicators.trading_points.buy_points || indicators.trading_points.buy_points.length === 0) &&
+                                         (!indicators.trading_points.sell_points || indicators.trading_points.sell_points.length === 0) && (
+                                          <span style={{ color: '#999' }}>暂无买卖点信号</span>
+                                        )}
+                                      </Space>
+                                    ),
+                                  });
+                                }
+                                
+                                return items;
+                              })()}
+                                />
+                              ),
+                            }]}
+                            style={{ marginTop: 24 }}
+                          />
+                        )}
+
+
+
+                        {/* 关键价位 */}
+                        {(analysisResult.indicators.pivot || analysisResult.indicators.pivot_r1 || analysisResult.indicators.resistance_20d_high) && (
+                          <Collapse
+                            ghost
+                            defaultActiveKey={['pivot']}
+                            items={[{
+                              key: 'pivot',
+                              label: (
+                                <span>
+                                  <BarChartOutlined style={{ marginRight: 8 }} />
+                                  关键价位
+                                </span>
+                              ),
+                              children: (
+                                <Descriptions 
+                                  bordered 
+                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                  size="middle"
+                                  layout="vertical"
+                                  items={(() => {
+                                const items = [];
+                                const indicators = analysisResult.indicators;
+                                
+                                if (indicators.pivot) {
+                                  items.push({
+                                    label: createIndicatorLabel('枢轴点', 'pivot'),
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600 }}>
+                                        ${formatValue(indicators.pivot)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.pivot_r1) {
+                                  items.push({
+                                    label: createIndicatorLabel('压力位R1', 'pivot_r1'),
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
+                                        ${formatValue(indicators.pivot_r1)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.pivot_r2) {
+                                  items.push({
+                                    label: createIndicatorLabel('压力位R2', 'pivot_r2'),
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
+                                        ${formatValue(indicators.pivot_r2)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.pivot_r3) {
+                                  items.push({
+                                    label: createIndicatorLabel('压力位R3', 'pivot_r3'),
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
+                                        ${formatValue(indicators.pivot_r3)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.pivot_s1) {
+                                  items.push({
+                                    label: createIndicatorLabel('支撑位S1', 'pivot_s1'),
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
+                                        ${formatValue(indicators.pivot_s1)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.pivot_s2) {
+                                  items.push({
+                                    label: createIndicatorLabel('支撑位S2', 'pivot_s2'),
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
+                                        ${formatValue(indicators.pivot_s2)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.pivot_s3) {
+                                  items.push({
+                                    label: createIndicatorLabel('支撑位S3', 'pivot_s3'),
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
+                                        ${formatValue(indicators.pivot_s3)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.resistance_20d_high) {
+                                  items.push({
+                                    label: createIndicatorLabel('20日高点', 'resistance_20d_high'),
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
+                                        ${formatValue(indicators.resistance_20d_high)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                if (indicators.support_20d_low) {
+                                  items.push({
+                                    label: createIndicatorLabel('20日低点', 'support_20d_low'),
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
+                                        ${formatValue(indicators.support_20d_low)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                return items;
+                              })()}
+                                />
+                              ),
+                            }]}
+                            style={{ marginTop: 24 }}
+                          />
+                        )}
+
+                        {/* 交易信号 */}
+                        {analysisResult.signals && (
+                          <Collapse
+                            ghost
+                            defaultActiveKey={['signals']}
+                            items={[{
+                              key: 'signals',
+                              label: (
+                                <span>
+                                  <BarChartOutlined style={{ marginRight: 8 }} />
+                                  交易信号
+                                </span>
+                              ),
+                              children: (
+                                <Descriptions 
+                                  bordered 
+                                  column={{ xxl: 3, xl: 3, lg: 2, md: 2, sm: 1, xs: 1 }} 
+                                  size="middle"
+                                  layout="vertical"
+                                  items={(() => {
+                                const items = [];
+                                const signals = analysisResult.signals;
+                                const indicators = analysisResult.indicators;
+                                
+                                items.push({
+                                  label: '综合评分',
+                                  span: 1,
+                                  children: (
+                                <div style={{ textAlign: 'center' }}>
+                                  <Space align="baseline">
+                                    <span style={{
+                                      fontSize: 16,
+                                      fontWeight: 600,
+                                          color: (signals.score || 0) >= 50 ? '#3f8600' : '#cf1322',
+                                    }}>
+                                          {signals.score || 0}
+                                    </span>
+                                    <span style={{
+                                      fontSize: 16,
+                                      fontWeight: 600,
+                                          color: (signals.score || 0) >= 50 ? '#3f8600' : '#cf1322',
+                                    }}>
+                                      /100
+                                    </span>
+                                  </Space>
+                                </div>
+                                  ),
+                                });
+                                
+                                items.push({
+                                  label: '交易建议',
+                                  span: 1,
+                                  children: (
+                                <span style={{ fontSize: 16, fontWeight: 600 }}>
+                                      {signals.recommendation || 'N/A'}
+                                </span>
+                                  ),
+                                });
+                                
+                                if (signals.risk) {
+                                  const riskLevel = signals.risk.level || 'unknown';
+                                    const riskMap: Record<string, { color: string; text: string }> = {
+                                      'very_low': { color: 'success', text: '很低风险' },
+                                      'low': { color: 'success', text: '低风险' },
+                                      'medium': { color: 'warning', text: '中等风险' },
+                                      'high': { color: 'error', text: '高风险' },
+                                      'very_high': { color: 'error', text: '极高风险' },
+                                    };
+                                    const config = riskMap[String(riskLevel)] || { color: 'default', text: '未知' };
+                                  items.push({
+                                    label: '风险等级',
+                                    span: 1,
+                                    children: <Tag color={config.color}>{config.text}</Tag>,
+                                  });
+                                }
+                                
+                                if (signals.stop_loss) {
+                                  items.push({
+                                    label: '建议止损',
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#cf1322' }}>
+                                        ${formatValue(signals.stop_loss)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                if (signals.take_profit) {
+                                  items.push({
+                                    label: '建议止盈',
+                                    children: (
+                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#3f8600' }}>
+                                        ${formatValue(signals.take_profit)}
+                                  </span>
+                                    ),
+                                  });
+                                }
+                                
+                                if (signals.stop_loss && signals.take_profit && indicators.current_price && indicators.current_price > 0) {
+                                  const currentPrice = indicators.current_price;
+                                  items.push({
+                                    label: '风险回报比',
+                                    span: 3,
+                                    children: (
+                                  <Tag color="blue" style={{ fontSize: 14 }}>
+                                    1:{formatValue(
+                                      Math.abs(
+                                            ((signals.take_profit - currentPrice) / currentPrice) /
+                                            ((signals.stop_loss - currentPrice) / currentPrice)
+                                      ), 1
+                                    )}
+                                  </Tag>
+                                    ),
+                                  });
+                                }
+                                
+                                if (signals.signals && signals.signals.length > 0) {
+                                  items.push({
+                                    label: '信号列表',
+                                    span: 3,
+                                    children: (
+                                  <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
+                                        {signals.signals.map((signal: string, index: number) => (
+                                      <li key={index} style={{ marginBottom: 4, fontSize: 14 }}>{signal}</li>
+                                    ))}
+                                  </ul>
+                                    ),
+                                  });
+                                }
+                                
+                                return items;
+                              })()}
+                                />
+                              ),
+                            }]}
+                            style={{ marginTop: 24 }}
+                          />
+                        )}
 
                         {/* 基本面数据 */}
                         {analysisResult.indicators.fundamental_data && 
@@ -1391,493 +1883,6 @@ const MainPage: React.FC = () => {
                                     label: createIndicatorLabel('预测增长率', 'fundamental'),
                                     span: 1,
                                     children: `${formatValue(parseFloat(fd.ProjectedGrowthRate) * 100, 2)}%`,
-                                  });
-                                }
-                                
-                                return items;
-                              })()}
-                                />
-                              ),
-                            }]}
-                            style={{ marginTop: 24 }}
-                          />
-                        )}
-
-                        {/* 缠论分析 */}
-                        {(analysisResult.indicators.fractals || analysisResult.indicators.strokes || analysisResult.indicators.segments || analysisResult.indicators.central_banks) && (
-                          <Collapse
-                            ghost
-                            items={[{
-                              key: 'chanlun',
-                              label: (
-                                <span>
-                                  <BarChartOutlined style={{ marginRight: 8 }} />
-                                  缠论分析
-                                </span>
-                              ),
-                              children: (
-                                <Descriptions 
-                                  bordered 
-                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
-                                  size="middle"
-                                  layout="vertical"
-                                  items={(() => {
-                                const items = [];
-                                const indicators = analysisResult.indicators;
-                                
-                                if (indicators.trend_type) {
-                                  items.push({
-                                    label: createIndicatorLabel('走势类型', 'trend_type'),
-                                    span: 1,
-                                    children: (
-                                      <Tag color={
-                                        indicators.trend_type === 'up' ? 'success' :
-                                        indicators.trend_type === 'down' ? 'error' : 'default'
-                                      }>
-                                        {indicators.trend_type === 'up' ? '上涨' :
-                                         indicators.trend_type === 'down' ? '下跌' : '盘整'}
-                                      </Tag>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.fractal_count) {
-                                  items.push({
-                                    label: createIndicatorLabel('分型数量', 'fractals'),
-                                    span: 1,
-                                    children: (
-                                      <Space>
-                                        <span>顶分型: {indicators.fractal_count.top || 0}</span>
-                                        <span>底分型: {indicators.fractal_count.bottom || 0}</span>
-                                      </Space>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.stroke_count !== undefined) {
-                                  items.push({
-                                    label: createIndicatorLabel('笔数量', 'strokes'),
-                                    span: 1,
-                                    children: indicators.stroke_count,
-                                  });
-                                }
-                                
-                                if (indicators.segment_count !== undefined) {
-                                  items.push({
-                                    label: createIndicatorLabel('线段数量', 'segments'),
-                                    span: 1,
-                                    children: indicators.segment_count,
-                                  });
-                                }
-                                
-                                if (indicators.central_bank_count !== undefined) {
-                                  items.push({
-                                    label: createIndicatorLabel('中枢数量', 'central_banks'),
-                                    span: 1,
-                                    children: indicators.central_bank_count,
-                                  });
-                                }
-                                
-                                if (indicators.latest_stroke) {
-                                  items.push({
-                                    label: createIndicatorLabel('最新笔', 'strokes'),
-                                    span: 2,
-                                    children: (
-                                      <Space>
-                                        <Tag color={indicators.latest_stroke.type === 'up' ? 'success' : 'error'}>
-                                          {indicators.latest_stroke.type === 'up' ? '上涨笔' : '下跌笔'}
-                                        </Tag>
-                                        <span>
-                                          ${formatValue(indicators.latest_stroke.start_price)} → ${formatValue(indicators.latest_stroke.end_price)}
-                                        </span>
-                                        <span style={{
-                                          color: indicators.latest_stroke.price_change_pct >= 0 ? '#3f8600' : '#cf1322'
-                                        }}>
-                                          ({indicators.latest_stroke.price_change_pct >= 0 ? '+' : ''}{formatValue(indicators.latest_stroke.price_change_pct)}%)
-                                        </span>
-                                      </Space>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.latest_segment) {
-                                  items.push({
-                                    label: createIndicatorLabel('最新线段', 'segments'),
-                                    span: 2,
-                                    children: (
-                                      <Space>
-                                        <Tag color={indicators.latest_segment.type === 'up' ? 'success' : 'error'}>
-                                          {indicators.latest_segment.type === 'up' ? '上涨线段' : '下跌线段'}
-                                        </Tag>
-                                        <span>
-                                          ${formatValue(indicators.latest_segment.start_price)} → ${formatValue(indicators.latest_segment.end_price)}
-                                        </span>
-                                        <span style={{
-                                          color: indicators.latest_segment.price_change_pct >= 0 ? '#3f8600' : '#cf1322'
-                                        }}>
-                                          ({indicators.latest_segment.price_change_pct >= 0 ? '+' : ''}{formatValue(indicators.latest_segment.price_change_pct)}%)
-                                        </span>
-                                      </Space>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.latest_central_bank) {
-                                  items.push({
-                                    label: createIndicatorLabel('最新中枢', 'central_banks'),
-                                    span: 4,
-                                    children: (
-                                      <Space>
-                                        <span>上沿: <strong>${formatValue(indicators.latest_central_bank.high)}</strong></span>
-                                        <span>下沿: <strong>${formatValue(indicators.latest_central_bank.low)}</strong></span>
-                                        <span>中心: <strong>${formatValue(indicators.latest_central_bank.center)}</strong></span>
-                                        <span>宽度: {formatValue(indicators.latest_central_bank.width_pct, 2)}%</span>
-                                        <Tag color={
-                                          indicators.latest_central_bank.position === 'above' ? 'success' :
-                                          indicators.latest_central_bank.position === 'below' ? 'error' : 'default'
-                                        }>
-                                          {indicators.latest_central_bank.position === 'above' ? '上方' :
-                                           indicators.latest_central_bank.position === 'below' ? '下方' : '中枢内'}
-                                        </Tag>
-                                      </Space>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.latest_top_fractal) {
-                                  items.push({
-                                    label: createIndicatorLabel('最新顶分型', 'fractals'),
-                                    span: 2,
-                                    children: (
-                                      <Space>
-                                        <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
-                                          ${formatValue(indicators.latest_top_fractal.price)}
-                                        </span>
-                                        <span style={{ color: '#666' }}>
-                                          距离: {formatValue(indicators.latest_top_fractal.distance_pct, 2)}%
-                                        </span>
-                                      </Space>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.latest_bottom_fractal) {
-                                  items.push({
-                                    label: createIndicatorLabel('最新底分型', 'fractals'),
-                                    span: 2,
-                                    children: (
-                                      <Space>
-                                        <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
-                                          ${formatValue(indicators.latest_bottom_fractal.price)}
-                                        </span>
-                                        <span style={{ color: '#666' }}>
-                                          距离: {formatValue(indicators.latest_bottom_fractal.distance_pct, 2)}%
-                                        </span>
-                                      </Space>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.trading_points) {
-                                  items.push({
-                                    label: '买卖点',
-                                    span: 4,
-                                    children: (
-                                      <Space wrap>
-                                        {indicators.trading_points.buy_points && indicators.trading_points.buy_points.length > 0 && (
-                                          <>
-                                            {indicators.trading_points.buy_points.map((point: any, index: number) => (
-                                              <Tag key={`buy-${index}`} color="success">
-                                                {point.type}: ${formatValue(point.price)}
-                                              </Tag>
-                                            ))}
-                                          </>
-                                        )}
-                                        {indicators.trading_points.sell_points && indicators.trading_points.sell_points.length > 0 && (
-                                          <>
-                                            {indicators.trading_points.sell_points.map((point: any, index: number) => (
-                                              <Tag key={`sell-${index}`} color="error">
-                                                {point.type}: ${formatValue(point.price)}
-                                              </Tag>
-                                            ))}
-                                          </>
-                                        )}
-                                        {(!indicators.trading_points.buy_points || indicators.trading_points.buy_points.length === 0) &&
-                                         (!indicators.trading_points.sell_points || indicators.trading_points.sell_points.length === 0) && (
-                                          <span style={{ color: '#999' }}>暂无买卖点信号</span>
-                                        )}
-                                      </Space>
-                                    ),
-                                  });
-                                }
-                                
-                                return items;
-                              })()}
-                                />
-                              ),
-                            }]}
-                            style={{ marginTop: 24 }}
-                          />
-                        )}
-
-
-
-                        {/* 关键价位 */}
-                        {(analysisResult.indicators.pivot || analysisResult.indicators.pivot_r1 || analysisResult.indicators.resistance_20d_high) && (
-                          <Collapse
-                            ghost
-                            items={[{
-                              key: 'pivot',
-                              label: (
-                                <span>
-                                  <BarChartOutlined style={{ marginRight: 8 }} />
-                                  关键价位
-                                </span>
-                              ),
-                              children: (
-                                <Descriptions 
-                                  bordered 
-                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
-                                  size="middle"
-                                  layout="vertical"
-                                  items={(() => {
-                                const items = [];
-                                const indicators = analysisResult.indicators;
-                                
-                                if (indicators.pivot) {
-                                  items.push({
-                                    label: createIndicatorLabel('枢轴点', 'pivot'),
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600 }}>
-                                        ${formatValue(indicators.pivot)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.pivot_r1) {
-                                  items.push({
-                                    label: createIndicatorLabel('压力位R1', 'pivot_r1'),
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
-                                        ${formatValue(indicators.pivot_r1)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.pivot_r2) {
-                                  items.push({
-                                    label: createIndicatorLabel('压力位R2', 'pivot_r2'),
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
-                                        ${formatValue(indicators.pivot_r2)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.pivot_r3) {
-                                  items.push({
-                                    label: createIndicatorLabel('压力位R3', 'pivot_r3'),
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
-                                        ${formatValue(indicators.pivot_r3)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.pivot_s1) {
-                                  items.push({
-                                    label: createIndicatorLabel('支撑位S1', 'pivot_s1'),
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
-                                        ${formatValue(indicators.pivot_s1)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.pivot_s2) {
-                                  items.push({
-                                    label: createIndicatorLabel('支撑位S2', 'pivot_s2'),
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
-                                        ${formatValue(indicators.pivot_s2)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.pivot_s3) {
-                                  items.push({
-                                    label: createIndicatorLabel('支撑位S3', 'pivot_s3'),
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
-                                        ${formatValue(indicators.pivot_s3)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.resistance_20d_high) {
-                                  items.push({
-                                    label: createIndicatorLabel('20日高点', 'resistance_20d_high'),
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
-                                        ${formatValue(indicators.resistance_20d_high)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                if (indicators.support_20d_low) {
-                                  items.push({
-                                    label: createIndicatorLabel('20日低点', 'support_20d_low'),
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
-                                        ${formatValue(indicators.support_20d_low)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                return items;
-                              })()}
-                                />
-                              ),
-                            }]}
-                            style={{ marginTop: 24 }}
-                          />
-                        )}
-
-                        {/* 交易信号 */}
-                        {analysisResult.signals && (
-                          <Collapse
-                            ghost
-                            items={[{
-                              key: 'signals',
-                              label: (
-                                <span>
-                                  <BarChartOutlined style={{ marginRight: 8 }} />
-                                  交易信号
-                                </span>
-                              ),
-                              children: (
-                                <Descriptions 
-                                  bordered 
-                                  column={{ xxl: 3, xl: 3, lg: 2, md: 2, sm: 1, xs: 1 }} 
-                                  size="middle"
-                                  layout="vertical"
-                                  items={(() => {
-                                const items = [];
-                                const signals = analysisResult.signals;
-                                const indicators = analysisResult.indicators;
-                                
-                                items.push({
-                                  label: '综合评分',
-                                  span: 1,
-                                  children: (
-                                <div style={{ textAlign: 'center' }}>
-                                  <Space align="baseline">
-                                    <span style={{
-                                      fontSize: 16,
-                                      fontWeight: 600,
-                                          color: (signals.score || 0) >= 50 ? '#3f8600' : '#cf1322',
-                                    }}>
-                                          {signals.score || 0}
-                                    </span>
-                                    <span style={{
-                                      fontSize: 16,
-                                      fontWeight: 600,
-                                          color: (signals.score || 0) >= 50 ? '#3f8600' : '#cf1322',
-                                    }}>
-                                      /100
-                                    </span>
-                                  </Space>
-                                </div>
-                                  ),
-                                });
-                                
-                                items.push({
-                                  label: '交易建议',
-                                  span: 1,
-                                  children: (
-                                <span style={{ fontSize: 16, fontWeight: 600 }}>
-                                      {signals.recommendation || 'N/A'}
-                                </span>
-                                  ),
-                                });
-                                
-                                if (signals.risk) {
-                                  const riskLevel = signals.risk.level || 'unknown';
-                                    const riskMap: Record<string, { color: string; text: string }> = {
-                                      'very_low': { color: 'success', text: '很低风险' },
-                                      'low': { color: 'success', text: '低风险' },
-                                      'medium': { color: 'warning', text: '中等风险' },
-                                      'high': { color: 'error', text: '高风险' },
-                                      'very_high': { color: 'error', text: '极高风险' },
-                                    };
-                                    const config = riskMap[String(riskLevel)] || { color: 'default', text: '未知' };
-                                  items.push({
-                                    label: '风险等级',
-                                    span: 1,
-                                    children: <Tag color={config.color}>{config.text}</Tag>,
-                                  });
-                                }
-                                
-                                if (signals.stop_loss) {
-                                  items.push({
-                                    label: '建议止损',
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#cf1322' }}>
-                                        ${formatValue(signals.stop_loss)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                if (signals.take_profit) {
-                                  items.push({
-                                    label: '建议止盈',
-                                    children: (
-                                  <span style={{ fontSize: 16, fontWeight: 600, color: '#3f8600' }}>
-                                        ${formatValue(signals.take_profit)}
-                                  </span>
-                                    ),
-                                  });
-                                }
-                                
-                                if (signals.stop_loss && signals.take_profit && indicators.current_price && indicators.current_price > 0) {
-                                  const currentPrice = indicators.current_price;
-                                  items.push({
-                                    label: '风险回报比',
-                                    span: 3,
-                                    children: (
-                                  <Tag color="blue" style={{ fontSize: 14 }}>
-                                    1:{formatValue(
-                                      Math.abs(
-                                            ((signals.take_profit - currentPrice) / currentPrice) /
-                                            ((signals.stop_loss - currentPrice) / currentPrice)
-                                      ), 1
-                                    )}
-                                  </Tag>
-                                    ),
-                                  });
-                                }
-                                
-                                if (signals.signals && signals.signals.length > 0) {
-                                  items.push({
-                                    label: '信号列表',
-                                    span: 3,
-                                    children: (
-                                  <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
-                                        {signals.signals.map((signal: string, index: number) => (
-                                      <li key={index} style={{ marginBottom: 4, fontSize: 14 }}>{signal}</li>
-                                    ))}
-                                  </ul>
-                                    ),
                                   });
                                 }
                                 
