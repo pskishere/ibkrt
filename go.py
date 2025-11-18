@@ -137,7 +137,7 @@ def get_cached_analysis(symbol, duration, bar_size):
 
 def save_analysis_cache(symbol, duration, bar_size, result):
     """
-    保存分析结果到数据库
+    保存分析结果到数据库（更新或插入）
     """
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -145,15 +145,9 @@ def save_analysis_cache(symbol, duration, bar_size, result):
         
         today = date.today().isoformat()
         
-        # 先删除当天的旧数据（如果有）
+        # 使用 INSERT OR REPLACE 来更新或插入数据
         cursor.execute('''
-            DELETE FROM analysis_cache
-            WHERE symbol = ? AND duration = ? AND bar_size = ? AND query_date = ?
-        ''', (symbol.upper(), duration, bar_size, today))
-        
-        # 插入新数据
-        cursor.execute('''
-            INSERT INTO analysis_cache 
+            INSERT OR REPLACE INTO analysis_cache 
             (symbol, duration, bar_size, query_date, indicators, signals, candles, 
              ai_analysis, model, ai_available)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -178,27 +172,10 @@ def save_analysis_cache(symbol, duration, bar_size, result):
 
 def cleanup_old_cache():
     """
-    清理非当天的旧数据
+    更新非当天的旧数据（保留历史数据，不再删除）
     """
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        today = date.today().isoformat()
-        
-        cursor.execute('''
-            DELETE FROM analysis_cache
-            WHERE query_date != ?
-        ''', (today,))
-        
-        deleted_count = cursor.rowcount
-        conn.commit()
-        conn.close()
-        
-        if deleted_count > 0:
-            logger.info(f"清理了 {deleted_count} 条旧缓存数据")
-    except Exception as e:
-        logger.error(f"清理旧缓存失败: {e}")
+    # 不再删除旧数据，保留历史记录
+    pass
 
 def save_stock_info(symbol, name):
     """
@@ -3195,9 +3172,6 @@ def main():
     
     # 初始化数据库
     init_database()
-    
-    # 清理旧缓存
-    cleanup_old_cache()
     
     port = 8080
     logger.info(f"API服务启动 http://0.0.0.0:{port}")
