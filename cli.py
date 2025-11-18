@@ -617,6 +617,66 @@ class TradingCLI:
                     wr_status = "⚪中性"
                 print(f"📉 威廉%R: {wr:.1f} {wr_status}")
             
+            # CCI顺势指标
+            if 'cci' in indicators:
+                cci = indicators['cci']
+                cci_signal = indicators.get('cci_signal', 'neutral')
+                if cci_signal == 'overbought':
+                    cci_status = "🔴超买(>100)"
+                elif cci_signal == 'oversold':
+                    cci_status = "🟢超卖(<-100)"
+                else:
+                    cci_status = "⚪中性"
+                print(f"📊 CCI(14日): {cci:.1f} {cci_status} [需14天数据]")
+            
+            # ADX趋势强度指标
+            if 'adx' in indicators:
+                adx = indicators['adx']
+                plus_di = indicators.get('plus_di', 0)
+                minus_di = indicators.get('minus_di', 0)
+                
+                if adx > 40:
+                    adx_status = "💪强趋势"
+                elif adx > 25:
+                    adx_status = "📈中趋势"
+                elif adx > 20:
+                    adx_status = "⚪弱趋势"
+                else:
+                    adx_status = "📊无趋势"
+                
+                di_trend = "多头" if plus_di > minus_di else "空头"
+                print(f"🎯 ADX(14日): {adx:.1f} {adx_status} | +DI={plus_di:.1f} -DI={minus_di:.1f} {di_trend} [需28天数据]")
+            
+            # VWAP成交量加权平均价
+            if 'vwap' in indicators:
+                vwap = indicators['vwap']
+                vwap_signal = indicators.get('vwap_signal', 'neutral')
+                diff_pct = ((current - vwap) / vwap * 100) if vwap > 0 else 0
+                
+                if vwap_signal == 'above':
+                    vwap_status = "📈高于VWAP(机构成本线)"
+                elif vwap_signal == 'below':
+                    vwap_status = "📉低于VWAP(机构成本线)"
+                else:
+                    vwap_status = "⚪接近VWAP"
+                
+                print(f"💰 VWAP: ${vwap:.2f} ({diff_pct:+.1f}%) {vwap_status}")
+            
+            # SAR抛物线转向指标
+            if 'sar' in indicators:
+                sar = indicators['sar']
+                sar_signal = indicators.get('sar_signal', 'neutral')
+                sar_distance = indicators.get('sar_distance_pct', 0)
+                
+                if sar_signal == 'bullish':
+                    sar_status = f"🟢看涨(SAR在下方,距离{abs(sar_distance):.1f}%)"
+                elif sar_signal == 'bearish':
+                    sar_status = f"🔴看跌(SAR在上方,距离{abs(sar_distance):.1f}%)"
+                else:
+                    sar_status = "⚪中性"
+                
+                print(f"🎯 SAR: ${sar:.2f} {sar_status} [需10天数据]")
+            
             # OBV趋势
             if 'obv_trend' in indicators:
                 obv_trend = indicators['obv_trend']

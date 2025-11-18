@@ -998,6 +998,115 @@ const MainPage: React.FC = () => {
                                 });
                               }
                               
+                              // CCI顺势指标
+                              if (indicators.cci !== undefined) {
+                                items.push({
+                                  label: createIndicatorLabel('CCI', 'cci'),
+                                  children: (
+                                <Space>
+                                      <span style={{ fontSize: 16, fontWeight: 600 }}>{formatValue(indicators.cci, 1)}</span>
+                                  <Tag 
+                                    color={
+                                          indicators.cci_signal === 'overbought' ? 'error' : 
+                                          indicators.cci_signal === 'oversold' ? 'success' : 'default'
+                                    }
+                                  >
+                                        {indicators.cci_signal === 'overbought' ? '超买(>100)' : 
+                                         indicators.cci_signal === 'oversold' ? '超卖(<-100)' : '中性'}
+                                  </Tag>
+                                </Space>
+                                  ),
+                                });
+                              }
+                              
+                              // ADX趋势强度指标
+                              if (indicators.adx !== undefined) {
+                                items.push({
+                                  label: createIndicatorLabel('ADX', 'adx'),
+                                  children: (
+                                <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                                  <div>
+                                        <span style={{ fontSize: 16, fontWeight: 600 }}>{formatValue(indicators.adx, 1)}</span>
+                                    <Tag 
+                                      color={
+                                            indicators.adx > 40 ? 'success' : 
+                                            indicators.adx > 25 ? 'default' : 'warning'
+                                      }
+                                      style={{ marginLeft: 8 }}
+                                    >
+                                          {indicators.adx > 40 ? '强趋势' : 
+                                           indicators.adx > 25 ? '中趋势' : 
+                                           indicators.adx > 20 ? '弱趋势' : '无趋势'}
+                                    </Tag>
+                                  </div>
+                                      {indicators.plus_di !== undefined && indicators.minus_di !== undefined && (
+                                    <div>
+                                      <span>+DI={formatValue(indicators.plus_di, 1)} -DI={formatValue(indicators.minus_di, 1)}</span>
+                                          <Tag color={indicators.plus_di > indicators.minus_di ? 'success' : 'error'} style={{ marginLeft: 8 }}>
+                                            {indicators.plus_di > indicators.minus_di ? '多头' : '空头'}
+                                      </Tag>
+                                    </div>
+                                  )}
+                                </Space>
+                                  ),
+                                });
+                              }
+                              
+                              // VWAP成交量加权平均价
+                              if (indicators.vwap !== undefined) {
+                                const currentPrice = indicators.current_price || 0;
+                                const diffPct = ((currentPrice - indicators.vwap) / indicators.vwap * 100);
+                                items.push({
+                                  label: createIndicatorLabel('VWAP', 'vwap'),
+                                  children: (
+                                <Space>
+                                      <span style={{ fontSize: 16, fontWeight: 600 }}>${formatValue(indicators.vwap)}</span>
+                                      <span style={{
+                                        fontSize: 14,
+                                        color: diffPct >= 0 ? '#3f8600' : '#cf1322',
+                                      }}>
+                                        ({diffPct >= 0 ? '+' : ''}{diffPct.toFixed(1)}%)
+                                      </span>
+                                  <Tag 
+                                    color={
+                                          indicators.vwap_signal === 'above' ? 'success' : 
+                                          indicators.vwap_signal === 'below' ? 'error' : 'default'
+                                    }
+                                  >
+                                        {indicators.vwap_signal === 'above' ? '高于VWAP' : 
+                                         indicators.vwap_signal === 'below' ? '低于VWAP' : '接近VWAP'}
+                                  </Tag>
+                                </Space>
+                                  ),
+                                });
+                              }
+                              
+                              // SAR抛物线转向指标
+                              if (indicators.sar !== undefined) {
+                                items.push({
+                                  label: createIndicatorLabel('SAR', 'sar'),
+                                  children: (
+                                <Space>
+                                      <span style={{ fontSize: 16, fontWeight: 600 }}>${formatValue(indicators.sar)}</span>
+                                  <Tag 
+                                    color={
+                                          indicators.sar_signal === 'bullish' ? 'success' : 
+                                          indicators.sar_signal === 'bearish' ? 'error' : 'default'
+                                    }
+                                  >
+                                        {indicators.sar_signal === 'bullish' ? '看涨' : 
+                                         indicators.sar_signal === 'bearish' ? '看跌' : '中性'}
+                                  </Tag>
+                                      {indicators.sar_distance_pct !== undefined && (
+                                        <span style={{ fontSize: 14 }}>
+                                          (距离{Math.abs(indicators.sar_distance_pct).toFixed(1)}%)
+                                        </span>
+                                  )}
+                                </Space>
+                                  ),
+                                });
+                              }
+                              
                               if (indicators.obv_trend) {
                                 items.push({
                                   label: createIndicatorLabel('OBV趋势', 'obv'),

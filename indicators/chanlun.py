@@ -30,18 +30,16 @@ def identify_fractals(highs, lows, closes):
         next_high = highs[i+1]
         next_low = lows[i+1]
         
-        # 顶分型：中间K线的高点最高，且低点也最高
-        if (curr_high > prev_high and curr_high > next_high and
-            curr_low > prev_low and curr_low > next_low):
+        # 顶分型：中间K线的高点最高
+        if curr_high > prev_high and curr_high > next_high:
             fractals['top_fractals'].append({
                 'index': i,
                 'price': float(curr_high),
                 'date_index': i
             })
         
-        # 底分型：中间K线的低点最低，且高点也最低
-        if (curr_low < prev_low and curr_low < next_low and
-            curr_high < prev_high and curr_high < next_high):
+        # 底分型：中间K线的低点最低
+        if curr_low < prev_low and curr_low < next_low:
             fractals['bottom_fractals'].append({
                 'index': i,
                 'price': float(curr_low),
@@ -55,6 +53,7 @@ def identify_strokes(fractals, closes):
     """
     识别笔
     笔：连接相邻的顶分型和底分型
+    优化版：降低最小幅度要求，从0.5%降为0.3%
     """
     strokes = []
     
@@ -90,11 +89,11 @@ def identify_strokes(fractals, closes):
         else:
             # 确保分型类型交替
             if f['type'] != valid_fractals[-1]['type']:
-                # 检查价格是否满足笔的条件（至少有一定幅度）
+                # 检查价格是否满足笔的条件（降低幅度要求）
                 price_diff = abs(f['price'] - valid_fractals[-1]['price'])
                 price_pct = (price_diff / valid_fractals[-1]['price']) * 100
-                # 至少0.5%的幅度才认为是有效笔
-                if price_pct >= 0.5:
+                # 从0.5%降低到0.3%的幅度才认为是有效笔（优化：更宽松）
+                if price_pct >= 0.3:
                     valid_fractals.append(f)
     
     # 生成笔
@@ -121,17 +120,19 @@ def identify_strokes(fractals, closes):
 def identify_segments(strokes, closes):
     """
     识别线段
-    线段：由笔组成的更大结构，需要至少3笔
+    线段：由笔组成的更大结构
+    优化版：在数据有限时降低要求，至少2笔即可形成线段
     """
     segments = []
     
-    if len(strokes) < 3:
+    # 降低最小笔数要求：从3笔降为2笔
+    if len(strokes) < 2:
         return segments
     
     # 简化的线段识别：寻找连续的同向笔
     i = 0
-    while i < len(strokes) - 2:
-        # 检查是否有3笔以上的同向或交替结构
+    while i < len(strokes) - 1:
+        # 检查是否有2笔以上的同向或交替结构
         segment_strokes = [strokes[i]]
         
         # 尝试扩展线段
@@ -155,8 +156,8 @@ def identify_segments(strokes, closes):
             if len(segment_strokes) >= 5:
                 break
         
-        # 如果至少有3笔，形成线段
-        if len(segment_strokes) >= 3:
+        # 如果至少有2笔，形成线段（优化：从3笔降为2笔）
+        if len(segment_strokes) >= 2:
             start_stroke = segment_strokes[0]
             end_stroke = segment_strokes[-1]
             
@@ -182,61 +183,85 @@ def identify_segments(strokes, closes):
 def identify_central_banks(segments, closes):
     """
     识别中枢
-    中枢：价格震荡的区间，通常由至少3个线段的重叠部分形成
+    中枢：价格震荡的区间
+    优化版：支持2个线段的重叠（宽松模式），同时保留3个线段的标准模式
     """
     central_banks = []
     
-    if len(segments) < 3:
+    if len(segments) < 2:
         return central_banks
     
-    # 寻找线段的重叠区间
-    for i in range(len(segments) - 2):
-        seg1 = segments[i]
-        seg2 = segments[i + 1]
-        seg3 = segments[i + 2]
-        
-        # 计算三个线段的价格重叠区间
-        prices = [
-            seg1['start_price'], seg1['end_price'],
-            seg2['start_price'], seg2['end_price'],
-            seg3['start_price'], seg3['end_price']
-        ]
-        
-        high_price = max(prices)
-        low_price = min(prices)
-        
-        # 检查是否有重叠（高点和低点有交集）
-        seg1_range = (min(seg1['start_price'], seg1['end_price']),
-                      max(seg1['start_price'], seg1['end_price']))
-        seg2_range = (min(seg2['start_price'], seg2['end_price']),
-                      max(seg2['start_price'], seg2['end_price']))
-        seg3_range = (min(seg3['start_price'], seg3['end_price']),
-                      max(seg3['start_price'], seg3['end_price']))
-        
-        # 计算重叠区间
-        overlap_high = min(seg1_range[1], seg2_range[1], seg3_range[1])
-        overlap_low = max(seg1_range[0], seg2_range[0], seg3_range[0])
-        
-        # 如果有重叠，形成中枢
-        if overlap_high > overlap_low:
-            # 中枢的上下沿
-            central_high = overlap_high
-            central_low = overlap_low
+    # 优先使用3线段标准模式
+    if len(segments) >= 3:
+        for i in range(len(segments) - 2):
+            seg1 = segments[i]
+            seg2 = segments[i + 1]
+            seg3 = segments[i + 2]
             
-            # 中枢的起始和结束索引
-            start_idx = min(seg1['start_index'], seg2['start_index'], seg3['start_index'])
-            end_idx = max(seg1['end_index'], seg2['end_index'], seg3['end_index'])
+            # 计算三个线段的价格重叠区间
+            seg1_range = (min(seg1['start_price'], seg1['end_price']),
+                          max(seg1['start_price'], seg1['end_price']))
+            seg2_range = (min(seg2['start_price'], seg2['end_price']),
+                          max(seg2['start_price'], seg2['end_price']))
+            seg3_range = (min(seg3['start_price'], seg3['end_price']),
+                          max(seg3['start_price'], seg3['end_price']))
             
-            central_banks.append({
-                'start_index': start_idx,
-                'end_index': end_idx,
-                'high': float(central_high),
-                'low': float(central_low),
-                'center': float((central_high + central_low) / 2),
-                'width': float(central_high - central_low),
-                'width_pct': float(((central_high - central_low) / central_low) * 100),
-                'segment_count': 3
-            })
+            # 计算重叠区间
+            overlap_high = min(seg1_range[1], seg2_range[1], seg3_range[1])
+            overlap_low = max(seg1_range[0], seg2_range[0], seg3_range[0])
+            
+            # 如果有重叠，形成中枢
+            if overlap_high > overlap_low:
+                start_idx = min(seg1['start_index'], seg2['start_index'], seg3['start_index'])
+                end_idx = max(seg1['end_index'], seg2['end_index'], seg3['end_index'])
+                
+                central_banks.append({
+                    'start_index': start_idx,
+                    'end_index': end_idx,
+                    'high': float(overlap_high),
+                    'low': float(overlap_low),
+                    'center': float((overlap_high + overlap_low) / 2),
+                    'width': float(overlap_high - overlap_low),
+                    'width_pct': float(((overlap_high - overlap_low) / overlap_low) * 100),
+                    'segment_count': 3,
+                    'type': 'standard'  # 标准3线段中枢
+                })
+    
+    # 如果标准模式找不到中枢，使用2线段宽松模式（仅在数据有限时）
+    if len(central_banks) == 0 and len(segments) >= 2:
+        for i in range(len(segments) - 1):
+            seg1 = segments[i]
+            seg2 = segments[i + 1]
+            
+            # 只有当两个线段方向相反时才考虑形成中枢
+            if seg1['type'] != seg2['type']:
+                seg1_range = (min(seg1['start_price'], seg1['end_price']),
+                              max(seg1['start_price'], seg1['end_price']))
+                seg2_range = (min(seg2['start_price'], seg2['end_price']),
+                              max(seg2['start_price'], seg2['end_price']))
+                
+                # 计算重叠区间
+                overlap_high = min(seg1_range[1], seg2_range[1])
+                overlap_low = max(seg1_range[0], seg2_range[0])
+                
+                # 如果有重叠且幅度足够（至少1%）
+                if overlap_high > overlap_low:
+                    width_pct = ((overlap_high - overlap_low) / overlap_low) * 100
+                    if width_pct >= 1.0:  # 至少1%的宽度才认为是有效中枢
+                        start_idx = min(seg1['start_index'], seg2['start_index'])
+                        end_idx = max(seg1['end_index'], seg2['end_index'])
+                        
+                        central_banks.append({
+                            'start_index': start_idx,
+                            'end_index': end_idx,
+                            'high': float(overlap_high),
+                            'low': float(overlap_low),
+                            'center': float((overlap_high + overlap_low) / 2),
+                            'width': float(overlap_high - overlap_low),
+                            'width_pct': float(width_pct),
+                            'segment_count': 2,
+                            'type': 'relaxed'  # 宽松2线段中枢
+                        })
     
     return central_banks
 
@@ -401,26 +426,27 @@ def calculate_chanlun_analysis(closes, highs, lows, volumes):
     """
     计算缠论分析
     包括：分型、笔、线段、中枢、买卖点
+    优化版：针对63日K线数据优化，降低各项最小要求
     """
     result = {}
     
-    # 确保有足够的数据点
-    if len(closes) < 10:
+    # 降低最小数据量要求：从10根降为5根
+    if len(closes) < 5:
         return result
     
     # 1. 识别分型（顶分型和底分型）
     fractals = identify_fractals(highs, lows, closes)
     result['fractals'] = fractals
     
-    # 2. 识别笔
+    # 2. 识别笔（优化：最小幅度0.3%）
     strokes = identify_strokes(fractals, closes)
     result['strokes'] = strokes
     
-    # 3. 识别线段
+    # 3. 识别线段（优化：至少2笔）
     segments = identify_segments(strokes, closes)
     result['segments'] = segments
     
-    # 4. 识别中枢
+    # 4. 识别中枢（优化：支持2线段模式）
     central_banks = identify_central_banks(segments, closes)
     result['central_banks'] = central_banks
     
@@ -435,6 +461,17 @@ def calculate_chanlun_analysis(closes, highs, lows, volumes):
     # 7. 当前状态摘要
     current_status = get_chanlun_status(fractals, strokes, segments, central_banks, closes)
     result.update(current_status)
+    
+    # 8. 添加数据充足性评估
+    result['data_adequacy'] = {
+        'total_bars': len(closes),
+        'fractal_count': len(fractals.get('top_fractals', [])) + len(fractals.get('bottom_fractals', [])),
+        'stroke_count': len(strokes),
+        'segment_count': len(segments),
+        'central_bank_count': len(central_banks),
+        'is_adequate': len(closes) >= 30,  # 至少30根K线认为数据充足
+        'recommendation': '数据充足' if len(closes) >= 50 else '数据有限，建议谨慎使用' if len(closes) >= 30 else '数据不足，结果仅供参考'
+    }
     
     return result
 

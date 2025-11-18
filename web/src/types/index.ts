@@ -78,6 +78,18 @@ export interface Indicators {
   williams_r?: number;
   atr?: number;
   atr_percent?: number;
+  // 新增指标
+  cci?: number;
+  cci_signal?: string;
+  adx?: number;
+  plus_di?: number;
+  minus_di?: number;
+  vwap?: number;
+  vwap_signal?: string;
+  sar?: number;
+  sar_signal?: string;
+  sar_distance_pct?: number;
+  // 其他指标
   volatility_20?: number;
   volume_ratio?: number;
   obv_trend?: string;

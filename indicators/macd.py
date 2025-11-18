@@ -9,12 +9,13 @@ import numpy as np
 def _ema(data, period):
     """
     计算指数移动平均线
+    使用递归公式：EMA_today = α × Price_today + (1-α) × EMA_yesterday
     """
     alpha = 2 / (period + 1)
-    ema_vals = [data[0]]
+    ema = data[0]  # 使用第一个值作为初始EMA
     for price in data[1:]:
-        ema_vals.append(alpha * price + (1 - alpha) * ema_vals[-1])
-    return ema_vals[-1]
+        ema = alpha * price + (1 - alpha) * ema
+    return ema
 
 
 def calculate_macd(closes, fast_period=12, slow_period=26, signal_period=9):

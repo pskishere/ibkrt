@@ -31,8 +31,8 @@ from indicators import (
     calculate_volume, calculate_price_change, calculate_volatility,
     calculate_support_resistance, calculate_kdj, calculate_atr,
     calculate_williams_r, calculate_obv, analyze_trend_strength,
-    calculate_ichimoku_cloud, calculate_fibonacci_retracement,
-    calculate_ml_predictions, calculate_chanlun_analysis, get_trend
+    calculate_fibonacci_retracement, calculate_chanlun_analysis, get_trend,
+    calculate_cci, calculate_adx, calculate_vwap, calculate_sar
 )
 
 # 配置日志
@@ -1169,23 +1169,35 @@ class IBGateway(EWrapper, EClient):
         trend_info = analyze_trend_strength(closes, highs, lows)
         result.update(trend_info)
 
-        # 14. Ichimoku云图指标
-        ichimoku_data = calculate_ichimoku_cloud(highs, lows, closes)
-        result.update(ichimoku_data)
-
-        # 15. 斐波那契回撤位
+        # 14. 斐波那契回撤位
         fibonacci_levels = calculate_fibonacci_retracement(highs, lows)
         result.update(fibonacci_levels)
 
-        # 16. 机器学习预测模型
-        ml_predictions = calculate_ml_predictions(closes, highs, lows, volumes)
-        result.update(ml_predictions)
-
-        # 17. 缠论分析
+        # 15. 缠论分析（已优化63日数据）
         chanlun_data = calculate_chanlun_analysis(closes, highs, lows, volumes)
         result.update(chanlun_data)
+        
+        # 16. CCI（顺势指标）
+        if len(closes) >= 14:
+            cci_data = calculate_cci(closes, highs, lows)
+            result.update(cci_data)
+        
+        # 17. ADX（平均趋向指标）
+        if len(closes) >= 28:  # ADX需要period*2的数据
+            adx_data = calculate_adx(closes, highs, lows)
+            result.update(adx_data)
+        
+        # 18. VWAP（成交量加权平均价）
+        if len(closes) >= 1:
+            vwap_data = calculate_vwap(closes, highs, lows, volumes)
+            result.update(vwap_data)
+        
+        # 19. SAR（抛物线转向指标）
+        if len(closes) >= 10:
+            sar_data = calculate_sar(closes, highs, lows)
+            result.update(sar_data)
 
-        # 18. IBKR基本面数据
+        # 20. IBKR基本面数据
         try:
             fundamental_data = self.get_fundamental_data(symbol, 'ReportSnapshot')
             if fundamental_data:
@@ -1414,6 +1426,67 @@ class IBGateway(EWrapper, EClient):
                 signals['signals'].append(f'⚡ 高波动(ATR {atr_pct:.1f}%) - 建议缩小仓位')
             elif atr_pct < 1.5:
                 signals['signals'].append(f'✅ 低波动(ATR {atr_pct:.1f}%) - 适合持仓')
+        
+        # 14. CCI顺势指标
+        if 'cci' in indicators:
+            cci = indicators['cci']
+            cci_signal = indicators.get('cci_signal', 'neutral')
+            if cci_signal == 'overbought':
+                signals['signals'].append(f'🔴 CCI={cci:.1f} 超买区域 - 可能回调')
+                signals['score'] -= 15
+            elif cci_signal == 'oversold':
+                signals['signals'].append(f'🟢 CCI={cci:.1f} 超卖区域 - 可能反弹')
+                signals['score'] += 15
+        
+        # 15. ADX趋势强度
+        if 'adx' in indicators:
+            adx = indicators['adx']
+            adx_signal = indicators.get('adx_signal', 'weak_trend')
+            adx_direction = indicators.get('trend_direction', 'neutral')
+            
+            if adx_signal == 'strong_trend':
+                if adx_direction == 'up':
+                    signals['signals'].append(f'🚀 ADX={adx:.1f} 强势上涨趋势 - 顺势做多')
+                    signals['score'] += 20
+                elif adx_direction == 'down':
+                    signals['signals'].append(f'⚠️ ADX={adx:.1f} 强势下跌趋势 - 观望或做空')
+                    signals['score'] -= 20
+            elif adx_signal == 'weak_trend':
+                signals['signals'].append(f'📊 ADX={adx:.1f} 趋势不明显 - 震荡行情')
+        
+        # 16. VWAP价格位置
+        if 'vwap' in indicators and 'current_price' in indicators:
+            vwap = indicators['vwap']
+            current_price = indicators['current_price']
+            vwap_signal = indicators.get('vwap_signal', 'at')
+            
+            if vwap_signal == 'above':
+                signals['signals'].append(f'📈 价格在VWAP(${vwap:.2f})之上 - 多头信号')
+                signals['score'] += 10
+            elif vwap_signal == 'below':
+                signals['signals'].append(f'📉 价格在VWAP(${vwap:.2f})之下 - 空头信号')
+                signals['score'] -= 10
+        
+        # 17. SAR转向信号
+        if 'sar' in indicators:
+            sar = indicators['sar']
+            sar_signal = indicators.get('sar_signal', 'hold')
+            sar_trend = indicators.get('sar_trend', 'neutral')
+            
+            if sar_signal == 'buy':
+                if sar_trend == 'up':
+                    signals['signals'].append(f'🟢 SAR=${sar:.2f} 看涨信号')
+                    signals['score'] += 15
+                else:
+                    signals['signals'].append(f'🟢 SAR=${sar:.2f} 转向看涨')
+                    signals['score'] += 18
+            elif sar_signal == 'sell':
+                if sar_trend == 'down':
+                    signals['signals'].append(f'🔴 SAR=${sar:.2f} 看跌信号')
+                    signals['score'] -= 15
+                else:
+                    signals['signals'].append(f'🔴 SAR=${sar:.2f} 转向看跌')
+                    signals['score'] -= 18
                 
         # 综合建议
         score = signals['score']
@@ -1533,21 +1606,17 @@ class IBGateway(EWrapper, EClient):
                 risk_score += 15
                 risk_factors.append('量价背离')
         
-        # 7. 机器学习预测风险
-        if 'ml_trend' in indicators:
-            ml_trend = indicators['ml_trend']
-            ml_confidence = indicators.get('ml_confidence', 0)
-            
-            # 如果机器学习模型预测趋势与当前趋势相反，增加风险
-            current_trend = indicators.get('trend_direction', 'neutral')
-            if (ml_trend == 'up' and current_trend == 'down') or (ml_trend == 'down' and current_trend == 'up'):
+        # 7. ADX趋势强度风险
+        if 'adx' in indicators:
+            adx = indicators['adx']
+            # ADX低于20表示趋势不明确，增加交易风险
+            if adx < 20:
                 risk_score += 10
-                risk_factors.append('ML模型预测与当前趋势相反')
-            
-            # 如果机器学习模型置信度低，增加风险
-            if ml_confidence < 30:
-                risk_score += 5
-                risk_factors.append('ML模型置信度低')
+                risk_factors.append(f'ADX({adx:.1f})趋势不明确')
+            # ADX高于60表示趋势过强，可能反转
+            elif adx > 60:
+                risk_score += 15
+                risk_factors.append(f'ADX({adx:.1f})趋势过强可能反转')
         
         # 判断风险等级（返回英文标识符，前端负责显示）
         if risk_score >= 70:
@@ -2322,11 +2391,13 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
    - 支撑位S1: ${indicators.get('pivot_s1', 0):.2f}
 
 7. 现代技术指标:
-   - Ichimoku云图:
-     * 转换线: ${indicators.get('ichimoku_tenkan_sen', 0):.2f}
-     * 基准线: ${indicators.get('ichimoku_kijun_sen', 0):.2f}
-     * 先行跨度A: ${indicators.get('ichimoku_senkou_span_a', 0):.2f}
-     * 先行跨度B: ${indicators.get('ichimoku_senkou_span_b', 0):.2f}
+   - CCI(顺势指标): {indicators.get('cci', 0):.1f}
+   - ADX(趋势强度):
+     * ADX: {indicators.get('adx', 0):.1f}
+     * +DI: {indicators.get('plus_di', 0):.1f}
+     * -DI: {indicators.get('minus_di', 0):.1f}
+   - VWAP: ${indicators.get('vwap', 0):.2f}
+   - SAR(抛物线): ${indicators.get('sar', 0):.2f}
    - 斐波那契回撤位:
      * 23.6%: ${indicators.get('fib_23.6', 0):.2f}
      * 38.2%: ${indicators.get('fib_38.2', 0):.2f}
@@ -2350,7 +2421,7 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
 2. 基本面分析: 公司财务状况评估、估值水平分析、盈利能力评价
 3. 综合分析: 结合技术面和基本面，给出买入/卖出/观望的具体建议
 4. 风险提示: 技术风险和基本面风险的综合评估
-5. 操作建议: 建议的止损止盈位、仓位管理建议
+5. 操作建议: 建议的止损止盈位、仓位管理建议（重点关注SAR止损位和VWAP价格偏离度）
 6. 市场展望: 结合技术指标和基本面数据，分析未来可能的情境（牛市、熊市、震荡市中的不同策略）
 
 请用中文回答，简洁专业，重点突出，将技术分析和基本面分析有机结合。"""
@@ -2398,11 +2469,13 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
    - 支撑位S1: ${indicators.get('pivot_s1', 0):.2f}
 
 7. 现代技术指标:
-   - Ichimoku云图:
-     * 转换线: ${indicators.get('ichimoku_tenkan_sen', 0):.2f}
-     * 基准线: ${indicators.get('ichimoku_kijun_sen', 0):.2f}
-     * 先行跨度A: ${indicators.get('ichimoku_senkou_span_a', 0):.2f}
-     * 先行跨度B: ${indicators.get('ichimoku_senkou_span_b', 0):.2f}
+   - CCI(顺势指标): {indicators.get('cci', 0):.1f}
+   - ADX(趋势强度):
+     * ADX: {indicators.get('adx', 0):.1f}
+     * +DI: {indicators.get('plus_di', 0):.1f}
+     * -DI: {indicators.get('minus_di', 0):.1f}
+   - VWAP: ${indicators.get('vwap', 0):.2f}
+   - SAR(抛物线): ${indicators.get('sar', 0):.2f}
    - 斐波那契回撤位:
      * 23.6%: ${indicators.get('fib_23.6', 0):.2f}
      * 38.2%: ${indicators.get('fib_38.2', 0):.2f}
@@ -2420,10 +2493,10 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
 
 请提供:
 1. 当前市场状态分析（趋势、动能、波动）
-2. 关键技术信号解读（包括Ichimoku云图、斐波那契回撤位等现代技术指标）
+2. 关键技术信号解读（包括CCI、ADX、VWAP、SAR等现代技术指标）
 3. 买入/卖出/观望的具体建议（基于纯技术分析）
-4. 风险提示和注意事项
-5. 建议的止损止盈位
+4. 风险提示和注意事项（重点关注ADX趋势强度和CCI超买超卖）
+5. 建议的止损止盈位（参考SAR抛物线和VWAP支撑压力）
 6. 市场情绪和可能的情境分析（如牛市、熊市、震荡市中的不同策略）
 
 请用中文回答，简洁专业，重点突出。"""
@@ -2760,6 +2833,63 @@ def get_indicator_info():
             },
             'interpretation': '与RSI类似，用于刻画超买超卖区间，宜结合趋势判读',
             'usage': '关注极端值区域，结合趋势方向判断'
+        },
+        'cci': {
+            'name': 'CCI 顺势指标',
+            'description': 'CCI通过比较当前价格与平均价格的偏离程度，测量价格是否超买或超卖',
+            'calculation': 'CCI = (典型价格 - 典型价格移动平均) / (0.015 * 平均绝对偏差)，其中典型价格 = (最高价 + 最低价 + 收盘价) / 3',
+            'reference_range': {
+                '超卖': 'CCI < -100 超卖区域，价格可能过低，注意反弹机会',
+                '正常': '-100 到 +100 正常波动区间',
+                '超买': 'CCI > +100 超买区域，价格可能过高，注意回调风险',
+                '极端超卖': 'CCI < -200 极端超卖，强烈反弹信号',
+                '极端超买': 'CCI > +200 极端超买，强烈回调信号'
+            },
+            'interpretation': 'CCI是一个波动指标，主要用于识别超买超卖状态。CCI > +100表示价格高于平均水平较多，可能超买；CCI < -100表示价格低于平均水平较多，可能超卖。CCI穿越零轴也是重要信号：从负转正是看涨信号，从正转负是看跌信号',
+            'usage': '1) 关注CCI穿越±100线作为买卖信号；2) CCI > +100且继续上升表示强势，可持有；3) CCI < -100且继续下降表示弱势，需谨慎；4) 结合趋势使用，上升趋势中CCI回落至-100附近是买入机会；5) 注意背离：价格创新高但CCI未创新高是看跌信号'
+        },
+        'adx': {
+            'name': 'ADX 平均趋向指标',
+            'description': 'ADX用于衡量趋势的强度，不论趋势方向如何。配合+DI和-DI可以判断趋势方向',
+            'calculation': 'ADX是DX的移动平均，其中DX = |(+DI) - (-DI)| / |(+DI) + (-DI)| * 100。+DI和-DI基于价格变动计算',
+            'reference_range': {
+                '无趋势': 'ADX < 20 趋势不明显，市场处于震荡状态，不适合趋势跟随策略',
+                '弱趋势': 'ADX 20-25 趋势较弱，市场可能开始走出趋势',
+                '中趋势': 'ADX 25-40 趋势明显，趋势跟随策略有效',
+                '强趋势': 'ADX 40-60 趋势强劲，适合趋势跟随',
+                '极强趋势': 'ADX > 60 趋势极强，但可能即将反转或调整',
+                '+DI > -DI': '+DI在-DI上方表示上升趋势，多头主导',
+                '-DI > +DI': '-DI在+DI上方表示下降趋势，空头主导'
+            },
+            'interpretation': 'ADX只衡量趋势强度，不表示趋势方向。ADX上升表示趋势增强，ADX下降表示趋势减弱。+DI和-DI用于判断趋势方向：+DI > -DI表示上升趋势，-DI > +DI表示下降趋势。当ADX > 25且+DI > -DI时，是强烈的看涨信号；当ADX > 25且-DI > +DI时，是强烈的看跌信号',
+            'usage': '1) ADX < 20时避免趋势跟随策略，适合区间交易；2) ADX > 25时采用趋势跟随策略；3) 关注+DI和-DI的交叉：+DI上穿-DI是买入信号，-DI上穿+DI是卖出信号；4) ADX从低位上升表示趋势形成，可跟随趋势；5) ADX > 60后开始下降表示趋势可能衰竭，需谨慎'
+        },
+        'vwap': {
+            'name': 'VWAP 成交量加权平均价',
+            'description': 'VWAP是根据成交量加权的平均价格，反映机构投资者的平均成本，常用于判断价格是否合理',
+            'calculation': 'VWAP = ∑(价格 × 成交量) / ∑成交量，通常基于当日或近期数据计算',
+            'reference_range': {
+                '低于VWAP': '价格 < VWAP 价格低于机构成本，可能是买入机会，但需确认下跌动能是否衰竭',
+                '高于VWAP': '价格 > VWAP 价格高于机构成本，表示买盘强劲，但需注意回调风险',
+                '接近VWAP': '价格接近VWAP 多空力量平衡，可能发生方向选择',
+                '支撑作用': '上升趋势中VWAP常作为支撑位，回调至VWAP附近是买入机会',
+                '压力作用': '下降趋势中VWAP常作为压力位，反弹至VWAP附近是卖出机会'
+            },
+            'interpretation': 'VWAP是机构投资者常用的参考指标。价格高于VWAP表示当前买家成本高于市场平均成本，买盘强劲；价格低于VWAP表示当前卖家成本低于市场平均成本，卖盘压力较大。VWAP在日内交易中特别重要，机构常以VWAP作为买卖基准',
+            'usage': '1) 价格回落至VWAP附近且获得支撑时，可考虑买入；2) 价格突破VWAP且成交量放大，表示趋势可能持续；3) 日内交易中，价格低于VWAP时买入，高于VWAP时卖出；4) 结合趋势方向，上升趋势中VWAP是支撑，下降趋势中VWAP是压力；5) 关注价格与VWAP的偏离程度，过度偏离可能回归'
+        },
+        'sar': {
+            'name': 'SAR 抛物线转向指标',
+            'description': 'SAR是一种趋势跟随指标，通过在价格上下方显示点位来指示止损位和趋势方向',
+            'calculation': 'SAR基于加速因子（AF）和极值点（EP）计算，趋势每持续一期AF就增加，使SAR逐渐靠近价格',
+            'reference_range': {
+                'SAR在下方': 'SAR < 价格 看涨信号，SAR点位可作为止损位，价格跌破SAR则趋势反转',
+                'SAR在上方': 'SAR > 价格 看跌信号，SAR点位可作为止损位，价格突破SAR则趋势反转',
+                '转向信号': 'SAR从下方转到上方是卖出信号，从SAR上方转到下方是买入信号',
+                '距离远近': 'SAR距离价格较远表示趋势刚形成，较近表示趋势持续较久可能反转'
+            },
+            'interpretation': 'SAR是一种简单有效的趋势跟随工具。SAR在价格下方表示上升趋势，在价格上方表示下降趋势。SAR点位可以直接用作止损位。当价格突破SAR时，趋势发生反转，SAR也从一侧跳到另一侧。SAR在趋势市中非常有效，但在震荡市中可能产生较多假信号',
+            'usage': '1) SAR在价格下方时持有多头，以SAR为止损位；2) SAR在价格上方时持有空头或空仓，以SAR为止损位；3) SAR翻转时进行反向操作：从SAR下方转到上方则平多开空，从SAR上方转到下方则平空开多；4) 结合ADX使用，当ADX > 25时SAR信号更可靠；5) 震荡市中谨慎使用，可能产生频繁的假信号'
         },
         'atr': {
             'name': 'ATR 平均真实波幅',
