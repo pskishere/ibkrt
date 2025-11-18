@@ -249,6 +249,7 @@ class IBGateway(EWrapper, EClient):
         self.fundamental_data = {}  # 基本面数据
         self.req_id_counter = 1000  # 请求ID计数器
         self._fundamental_errors = {}  # 基本面数据错误跟踪（用于静默处理430错误）
+        self.request_errors = {}  # 记录请求错误: {reqId: {'code': int, 'message': str}}
         
         # 线程锁
         self.lock = threading.Lock()
@@ -430,6 +431,14 @@ class IBGateway(EWrapper, EClient):
                 self._fundamental_errors[reqId] = errorCode
             # 430错误完全静默处理，不调用super()也不记录日志
             return
+        
+        # 记录重要错误（如200 - 证券不存在）
+        if reqId > 0 and errorCode in [200, 201, 162, 354, 10197]:  # 常见的证券相关错误
+            with self.lock:
+                self.request_errors[reqId] = {
+                    'code': errorCode,
+                    'message': errorString
+                }
         
         # 对于需要忽略的错误，不调用super()以避免打印日志
         if errorCode in ignore_codes:
@@ -825,8 +834,15 @@ class IBGateway(EWrapper, EClient):
         max_wait = 15
         start_time = time.time()
         data_complete = False
+        has_error = False
         
         while time.time() - start_time < max_wait:
+            # 检查是否有错误
+            with self.lock:
+                if req_id in self.request_errors:
+                    has_error = True
+                    break
+                    
             with self.lock:
                 current_count = len(self.historical_data.get(req_id, []))
                 if current_count > 0:
@@ -839,6 +855,18 @@ class IBGateway(EWrapper, EClient):
                         break
             time.sleep(0.3)
         
+        # 检查是否有错误
+        error_info = None
+        with self.lock:
+            if req_id in self.request_errors:
+                error_info = self.request_errors[req_id].copy()
+                del self.request_errors[req_id]  # 清除错误记录
+        
+        # 如果有错误，返回None和错误信息
+        if error_info:
+            logger.warning(f"历史数据请求失败: {symbol}, 错误[{error_info['code']}]: {error_info['message']}")
+            return None, error_info
+        
         # 获取数据
         with self.lock:
             data = self.historical_data.get(req_id, []).copy()
@@ -850,7 +878,7 @@ class IBGateway(EWrapper, EClient):
         else:
             logger.warning(f"历史数据接收失败: {symbol}")
         
-        return data
+        return data, None  # 返回数据和错误信息（无错误为None）
         
     def get_stock_info(self, symbol: str, exchange: str = 'SMART', currency: str = 'USD'):
         """
@@ -1089,13 +1117,18 @@ class IBGateway(EWrapper, EClient):
         """
         计算技术指标（基于历史数据）
         返回：移动平均线、RSI、MACD等
+        如果证券不存在，返回(None, error_info)
         """
         # 获取历史数据
-        hist_data = self.get_historical_data(symbol, duration, bar_size)
+        hist_data, error = self.get_historical_data(symbol, duration, bar_size)
+        
+        # 如果有错误，返回错误信息
+        if error:
+            return None, error
         
         if not hist_data or len(hist_data) < 20:
             logger.warning(f"数据不足，无法计算技术指标: {symbol}")
-            return None
+            return None, None
             
         import numpy as np
         
@@ -1209,7 +1242,7 @@ class IBGateway(EWrapper, EClient):
             logger.warning(f"获取基本面数据异常: {symbol}, 错误: {e}")
             # 基本面数据获取失败不影响技术指标返回
             
-        return result
+        return result, None  # 返回结果和错误信息（无错误为None）
         
     def generate_signals(self, indicators: dict):
         """
@@ -2088,7 +2121,15 @@ def get_history(symbol):
     currency = request.args.get('currency', 'USD')
     
     logger.info(f"查询历史数据: {symbol}, {duration}, {bar_size}")
-    data = gateway.get_historical_data(symbol.upper(), duration, bar_size, exchange, currency)
+    data, error = gateway.get_historical_data(symbol.upper(), duration, bar_size, exchange, currency)
+    
+    # 如果有错误，返回错误信息
+    if error:
+        return jsonify({
+            'success': False,
+            'error_code': error['code'],
+            'message': error['message']
+        }), 400
     
     if data:
         return jsonify({
@@ -2596,10 +2637,18 @@ def analyze_stock(symbol):
         logger.warning(f"获取股票信息失败: {e}")
     
     # 获取历史K线数据
-    hist_data = gateway.get_historical_data(symbol_upper, duration, bar_size)
+    hist_data, hist_error = gateway.get_historical_data(symbol_upper, duration, bar_size)
     
     # 计算技术指标
-    indicators = gateway.calculate_technical_indicators(symbol_upper, duration, bar_size)
+    indicators, ind_error = gateway.calculate_technical_indicators(symbol_upper, duration, bar_size)
+    
+    # 检查是否有错误（如证券不存在）
+    if ind_error:
+        return jsonify({
+            'success': False,
+            'error_code': ind_error['code'],
+            'message': ind_error['message']
+        }), 400
     
     if not indicators:
         return jsonify({
@@ -3299,6 +3348,8 @@ def main():
     启动API服务
     """
     global gateway
+    import os
+    import time as time_module
     
     # 初始化数据库
     init_database()
@@ -3308,15 +3359,21 @@ def main():
     
     # 自动连接到IB TWS（带重试）
     logger.info("自动连接到IB TWS...")
+    
+    # 在 Docker 环境中使用 host.docker.internal 连接宿主机
+    ib_host = os.getenv('IB_GATEWAY_HOST', 'host.docker.internal')
+    ib_port = int(os.getenv('IB_GATEWAY_PORT', '7496'))
+    
+    logger.info(f"尝试连接 IB Gateway: {ib_host}:{ib_port}")
+    
     max_retries = 3
     for attempt in range(1, max_retries + 1):
         logger.info(f"尝试连接 ({attempt}/{max_retries})...")
         gateway = IBGateway()
         
-        if gateway.connect_gateway(host='127.0.0.1', port=7496, client_id=attempt):
+        if gateway.connect_gateway(host=ib_host, port=ib_port, client_id=attempt):
             # 等待数据加载
-            import time
-            time.sleep(2)
+            time_module.sleep(2)
             if gateway.accounts:
                 logger.info(f"✅ 已连接账户: {', '.join(gateway.accounts)}")
             break
@@ -3324,7 +3381,7 @@ def main():
             logger.warning(f"第 {attempt} 次连接失败")
             if attempt < max_retries:
                 logger.info("等待5秒后重试...")
-                time.sleep(5)
+                time_module.sleep(5)
             else:
                 logger.warning("⚠️  自动连接失败，可通过API手动连接")
                 gateway = None

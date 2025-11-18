@@ -4,6 +4,7 @@
 export interface ApiResponse<T = any> {
   success: boolean;
   message?: string;
+  error_code?: number;  // 错误代码（如200表示证券不存在）
   data?: T;
   [key: string]: any;
 }
@@ -132,6 +133,8 @@ export interface Signals {
  */
 export interface AnalysisResult {
   success: boolean;
+  message?: string;
+  error_code?: number;  // 错误代码（如200表示证券不存在）
   indicators: Indicators;
   signals: Signals;
   candles?: Candle[];

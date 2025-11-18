@@ -40,6 +40,9 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const maSeriesRefs = useRef<Map<number, ISeriesApi<'Line'>>>(new Map());
   const bbSeriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
+  const sarSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const pivotSeriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
   const fractalMarkersRef = useRef<any[]>([]);
   const strokeLinesRef = useRef<ISeriesApi<'Line'>[]>([]);
   const segmentLinesRef = useRef<ISeriesApi<'Line'>[]>([]);
@@ -52,6 +55,9 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     ma20: false,
     ma50: false,
     bb: false,
+    sar: false,
+    vwap: false,
+    pivotPoints: false,
     fractals: false,
     strokes: false,
     segments: false,
@@ -317,6 +323,127 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
       bbSeriesRefs.current.set('lower', lowerSeries as ISeriesApi<'Line'>);
     }
   }, [indicators, candles, indicatorVisibility.bb]);
+
+  /**
+   * 绘制SAR抛物线点位
+   */
+  useEffect(() => {
+    if (!chartRef.current || !indicators || !candles || candles.length === 0) return;
+
+    // 清理旧的SAR线
+    if (sarSeriesRef.current && chartRef.current) {
+      try {
+        chartRef.current.removeSeries(sarSeriesRef.current);
+        sarSeriesRef.current = null;
+      } catch (e) {
+        // 忽略已删除的系列
+      }
+    }
+
+    if (!indicatorVisibility.sar || indicators.sar === undefined) return;
+
+    // SAR是单个值，需要显示在所有K线上
+    const sarData = candles.map(candle => ({
+      time: parseTime(candle.time),
+      value: indicators.sar!,
+    }));
+
+    const sarSeries = chartRef.current.addSeries(LineSeries, {
+      color: indicators.sar_signal === 'bullish' ? '#4caf50' : '#f44336',
+      lineWidth: 2,
+      lineStyle: 3, // 点状线
+      title: 'SAR',
+      priceScaleId: 'left',
+    });
+    sarSeries.setData(sarData);
+    sarSeriesRef.current = sarSeries as ISeriesApi<'Line'>;
+  }, [indicators, candles, indicatorVisibility.sar]);
+
+  /**
+   * 绘制VWAP线
+   */
+  useEffect(() => {
+    if (!chartRef.current || !indicators || !candles || candles.length === 0) return;
+
+    // 清理旧的VWAP线
+    if (vwapSeriesRef.current && chartRef.current) {
+      try {
+        chartRef.current.removeSeries(vwapSeriesRef.current);
+        vwapSeriesRef.current = null;
+      } catch (e) {
+        // 忽略已删除的系列
+      }
+    }
+
+    if (!indicatorVisibility.vwap || indicators.vwap === undefined) return;
+
+    // VWAP是单个值，显示为水平线
+    const vwapData = candles.map(candle => ({
+      time: parseTime(candle.time),
+      value: indicators.vwap!,
+    }));
+
+    const vwapSeries = chartRef.current.addSeries(LineSeries, {
+      color: '#ff9800',
+      lineWidth: 2,
+      lineStyle: 0, // 实线
+      title: 'VWAP',
+      priceScaleId: 'left',
+    });
+    vwapSeries.setData(vwapData);
+    vwapSeriesRef.current = vwapSeries as ISeriesApi<'Line'>;
+  }, [indicators, candles, indicatorVisibility.vwap]);
+
+  /**
+   * 绘制枢轴点位线
+   */
+  useEffect(() => {
+    if (!chartRef.current || !indicators || !candles || candles.length === 0) return;
+
+    // 清理旧的枢轴点线
+    pivotSeriesRefs.current.forEach((series) => {
+      if (series && chartRef.current) {
+        try {
+          chartRef.current.removeSeries(series);
+        } catch (e) {
+          // 忽略已删除的系列
+        }
+      }
+    });
+    pivotSeriesRefs.current.clear();
+
+    if (!indicatorVisibility.pivotPoints) return;
+
+    const pivotLines = [
+      { key: 'pivot', value: indicators.pivot, color: '#9c27b0', name: 'P' },
+      { key: 'r1', value: indicators.pivot_r1, color: '#f44336', name: 'R1' },
+      { key: 'r2', value: indicators.pivot_r2, color: '#d32f2f', name: 'R2' },
+      { key: 'r3', value: indicators.pivot_r3, color: '#b71c1c', name: 'R3' },
+      { key: 's1', value: indicators.pivot_s1, color: '#4caf50', name: 'S1' },
+      { key: 's2', value: indicators.pivot_s2, color: '#388e3c', name: 'S2' },
+      { key: 's3', value: indicators.pivot_s3, color: '#2e7d32', name: 'S3' },
+    ].filter(line => line.value !== undefined);
+
+    pivotLines.forEach(({ key, value, color, name }) => {
+      const pivotData = candles.map(candle => ({
+        time: parseTime(candle.time),
+        value: value!,
+      }));
+
+      const pivotSeries = chartRef.current?.addSeries(LineSeries, {
+        color: color,
+        lineWidth: 1,
+        lineStyle: 2, // 虚线
+        title: name,
+        priceScaleId: 'left',
+      });
+
+      if (pivotSeries) {
+        pivotSeries.setData(pivotData);
+        pivotSeriesRefs.current.set(key, pivotSeries as ISeriesApi<'Line'>);
+      }
+    });
+  }, [indicators, candles, indicatorVisibility.pivotPoints]);
 
   /**
    * 绘制缠论分型
@@ -723,6 +850,48 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
           }}
         >
           布林带
+        </button>
+        <button
+          onClick={() => toggleIndicator('sar')}
+          style={{
+            padding: '4px 8px',
+            fontSize: '12px',
+            border: `1px solid ${indicatorVisibility.sar ? '#2196f3' : '#ccc'}`,
+            backgroundColor: indicatorVisibility.sar ? '#2196f3' : 'transparent',
+            color: indicatorVisibility.sar ? '#fff' : (theme === 'light' ? '#333' : '#ccc'),
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
+        >
+          SAR
+        </button>
+        <button
+          onClick={() => toggleIndicator('vwap')}
+          style={{
+            padding: '4px 8px',
+            fontSize: '12px',
+            border: `1px solid ${indicatorVisibility.vwap ? '#2196f3' : '#ccc'}`,
+            backgroundColor: indicatorVisibility.vwap ? '#2196f3' : 'transparent',
+            color: indicatorVisibility.vwap ? '#fff' : (theme === 'light' ? '#333' : '#ccc'),
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
+        >
+          VWAP
+        </button>
+        <button
+          onClick={() => toggleIndicator('pivotPoints')}
+          style={{
+            padding: '4px 8px',
+            fontSize: '12px',
+            border: `1px solid ${indicatorVisibility.pivotPoints ? '#2196f3' : '#ccc'}`,
+            backgroundColor: indicatorVisibility.pivotPoints ? '#2196f3' : 'transparent',
+            color: indicatorVisibility.pivotPoints ? '#fff' : (theme === 'light' ? '#333' : '#ccc'),
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
+        >
+          枢轴点
         </button>
         {hasChanlunData() && (
           <>

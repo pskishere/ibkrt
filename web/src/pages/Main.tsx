@@ -236,8 +236,19 @@ const MainPage: React.FC = () => {
           setAiAnalysisDrawerVisible(true);
         }
       } else {
-        const errorMsg = result?.message || '分析失败';
-        message.error(errorMsg);
+        // 处理错误，特别处理证券不存在的情况
+        let errorMsg = result?.message || '分析失败';
+        
+        // 如果有错误代码，显示更详细的错误信息
+        if (result?.error_code) {
+          if (result.error_code === 200) {
+            errorMsg = `股票代码 "${symbol}" 不存在或无权限查询，请检查代码是否正确`;
+          } else {
+            errorMsg = `错误[${result.error_code}]: ${result.message}`;
+          }
+        }
+        
+        message.error(errorMsg, 5); // 显示5秒
       }
     } catch (error: any) {
       message.error(error.message || '分析失败');
