@@ -29,7 +29,6 @@ interface TradingViewChartProps {
 const TradingViewChart: React.FC<TradingViewChartProps> = ({
   symbol,
   height = 500,
-  width = '100%',
   theme = 'light',
   indicators,
   candles,
@@ -283,7 +282,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     if (!indicatorVisibility.bb) return;
 
     if (indicators.bb_upper !== undefined && indicators.bb_middle !== undefined && indicators.bb_lower !== undefined) {
-      const bbData = candles.map((candle, index) => ({
+      const bbData = candles.map((candle) => ({
         time: parseTime(candle.time),
         upper: indicators.bb_upper!,
         middle: indicators.bb_middle!,

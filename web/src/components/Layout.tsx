@@ -1,7 +1,7 @@
 /**
  * 布局组件 - 无顶栏，直接显示内容
  */
-import React, { ReactNode } from 'react';
+import React, { type ReactNode } from 'react';
 import { Layout as AntLayout } from 'antd';
 import './Layout.css';
 
