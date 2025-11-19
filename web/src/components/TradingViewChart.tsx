@@ -92,38 +92,84 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // 创建图表
+    // 创建图表 - TradingView 风格配置
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: height,
       layout: {
-        background: { type: ColorType.Solid, color: theme === 'light' ? '#ffffff' : '#1e1e1e' },
-        textColor: theme === 'light' ? '#191919' : '#d1d5db',
+        background: { type: ColorType.Solid, color: theme === 'light' ? '#ffffff' : '#131722' },
+        textColor: theme === 'light' ? '#191919' : '#d1d4dc',
+        fontSize: 12,
       },
       grid: {
-        vertLines: { color: theme === 'light' ? '#e0e0e0' : '#2a2a2a' },
-        horzLines: { color: theme === 'light' ? '#e0e0e0' : '#2a2a2a' },
+        vertLines: { 
+          color: theme === 'light' ? '#e1e3eb' : '#2a2e39',
+          style: 0,
+          visible: true,
+        },
+        horzLines: { 
+          color: theme === 'light' ? '#e1e3eb' : '#2a2e39',
+          style: 0,
+          visible: true,
+        },
+      },
+      crosshair: {
+        mode: 1,
+        vertLine: {
+          color: theme === 'light' ? '#9598a1' : '#758696',
+          width: 1,
+          style: 3,
+          labelBackgroundColor: theme === 'light' ? '#4c525e' : '#363c4e',
+        },
+        horzLine: {
+          color: theme === 'light' ? '#9598a1' : '#758696',
+          width: 1,
+          style: 3,
+          labelBackgroundColor: theme === 'light' ? '#4c525e' : '#363c4e',
+        },
       },
       timeScale: {
         timeVisible: true,
         secondsVisible: false,
+        borderColor: theme === 'light' ? '#e1e3eb' : '#2a2e39',
+        barSpacing: 6,
+        minBarSpacing: 3,
+        rightOffset: 12,
+        fixLeftEdge: false,
+        fixRightEdge: false,
       },
       leftPriceScale: {
         visible: true,
-        borderColor: theme === 'light' ? '#e0e0e0' : '#2a2a2a',
+        borderColor: theme === 'light' ? '#e1e3eb' : '#2a2e39',
         scaleMargins: {
           top: 0.1,
-          bottom: 0.1,
+          bottom: 0.2,
         },
+        autoScale: true,
       },
       rightPriceScale: {
         visible: false,
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        mouseWheel: true,
+        pinch: true,
+      },
+      kineticScroll: {
+        mouse: true,
+        touch: true,
       },
     });
 
     chartRef.current = chart;
 
-    // 创建K线图系列
+    // 创建K线图系列 - TradingView 风格
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#26a69a',
       downColor: '#ef5350',
@@ -134,25 +180,25 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     });
     candleSeriesRef.current = candleSeries as ISeriesApi<'Candlestick'>;
 
-    // 创建成交量系列
+    // 创建成交量系列 - TradingView 风格
     const volumeSeries = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
       priceFormat: {
         type: 'volume',
       },
       priceScaleId: '',
+      lastValueVisible: false,
+      priceLineVisible: false,
     });
     volumeSeriesRef.current = volumeSeries as ISeriesApi<'Histogram'>;
     
-    // 设置成交量系列的缩放边距（通过 priceScale）
-    if (volumeSeries) {
-      chart.priceScale('').applyOptions({
-        scaleMargins: {
-          top: 0.8,
-          bottom: 0,
-        },
-      });
-    }
+    // 设置成交量系列的缩放边距
+    chart.priceScale('').applyOptions({
+      scaleMargins: {
+        top: 0.8,
+        bottom: 0,
+      },
+    });
 
     // 响应式调整
     const handleResize = () => {
@@ -251,9 +297,11 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
       if (maData.length > 0 && chartRef.current) {
         const maSeries = chartRef.current.addSeries(LineSeries, {
           color: color,
-          lineWidth: 2,
+          lineWidth: 1,
           title: `MA${period}`,
           priceScaleId: 'left',
+          lastValueVisible: false,
+          priceLineVisible: false,
         });
         maSeries.setData(maData);
         maSeriesRefs.current.set(period, maSeries as ISeriesApi<'Line'>);

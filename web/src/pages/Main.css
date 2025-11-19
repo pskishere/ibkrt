@@ -22,6 +22,23 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+/* 分析内容区域统一边距 */
+.main-page .analysis-content {
+  padding: 0 16px;
+}
+
+/* Collapse 组件边距对齐 */
+.main-page :global(.ant-collapse) {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* Descriptions 组件边距对齐 */
+.main-page :global(.ant-descriptions) {
+  margin-left: 0;
+  margin-right: 0;
+}
+
 /* 移动端响应式样式 */
 @media (max-width: 768px) {
   .main-page {
