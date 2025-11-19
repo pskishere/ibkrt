@@ -9,6 +9,8 @@ services:
       # IBKR连接配置 - 使用宿主机网络
       - IB_GATEWAY_HOST=host.docker.internal
       - IB_GATEWAY_PORT=7496
+      # Ollama服务配置 - 使用宿主机网络
+      - OLLAMA_HOST=http://host.docker.internal:11434
     ports:
       - "8080:8080"
     volumes:
@@ -27,11 +29,6 @@ services:
       dockerfile: Dockerfile
     container_name: schwabgo-frontend
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
     networks:
       - schwabgo-network
 

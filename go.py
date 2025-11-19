@@ -2247,13 +2247,16 @@ def _check_ollama_available():
         import ollama
         import requests
         
+        # 从环境变量读取Ollama服务地址
+        ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
+        
         # 先尝试使用 requests 快速检查服务是否运行
         try:
-            response = requests.get('http://localhost:11434/api/tags', timeout=2)
+            response = requests.get(f'{ollama_host}/api/tags', timeout=2)
             if response.status_code == 200:
                 # 服务运行中，尝试验证 ollama 模块是否可用
                 try:
-                    client = ollama.Client(host='http://localhost:11434')
+                    client = ollama.Client(host=ollama_host)
                     # 尝试列出模型来验证服务是否可用
                     client.list()
                     return True
@@ -2578,9 +2581,10 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
 
 请用中文回答，简洁专业，重点突出。"""
 
-        # 调用Ollama（固定使用本机服务）
+        # 调用Ollama（使用环境变量配置的服务地址）
+        ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
         try:
-            client = ollama.Client(host='http://localhost:11434')
+            client = ollama.Client(host=ollama_host)
         except Exception:
             client = None
         response = (client.chat if client else ollama.chat)(
