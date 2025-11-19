@@ -461,7 +461,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
       // 检查 setMarkers 方法是否存在
       const seriesAny = series as any;
       if (typeof seriesAny.setMarkers !== 'function') {
-        console.warn('setMarkers method not available, skipping fractal markers');
+        // setMarkers 方法不可用，跳过分型标记绘制
         return;
       }
 
@@ -533,10 +533,19 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
           const startIdx = stroke.start_index;
           const endIdx = stroke.end_index;
           
+          // 确保开始和结束索引不同，避免重复时间戳
+          if (startIdx === endIdx) return;
+          
           if (startIdx >= 0 && startIdx < candles.length && 
               endIdx >= 0 && endIdx < candles.length) {
             const startCandle = candles[startIdx];
             const endCandle = candles[endIdx];
+            
+            const startTime = parseTime(startCandle.time);
+            const endTime = parseTime(endCandle.time);
+            
+            // 再次检查时间是否相同，确保数据有序
+            if (startTime >= endTime) return;
             
             const strokeSeries = chartRef.current?.addSeries(LineSeries, {
               color: stroke.type === 'up' ? '#4caf50' : '#f44336',
@@ -547,8 +556,8 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
             
             if (strokeSeries) {
               strokeSeries.setData([
-                { time: parseTime(startCandle.time), value: stroke.start_price || startCandle.close },
-                { time: parseTime(endCandle.time), value: stroke.end_price || endCandle.close },
+                { time: startTime, value: stroke.start_price || startCandle.close },
+                { time: endTime, value: stroke.end_price || endCandle.close },
               ]);
               strokeLinesRef.current.push(strokeSeries as ISeriesApi<'Line'>);
             }
@@ -584,10 +593,19 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
           const startIdx = segment.start_index;
           const endIdx = segment.end_index;
           
+          // 确保开始和结束索引不同，避免重复时间戳
+          if (startIdx === endIdx) return;
+          
           if (startIdx >= 0 && startIdx < candles.length && 
               endIdx >= 0 && endIdx < candles.length) {
             const startCandle = candles[startIdx];
             const endCandle = candles[endIdx];
+            
+            const startTime = parseTime(startCandle.time);
+            const endTime = parseTime(endCandle.time);
+            
+            // 再次检查时间是否相同，确保数据有序
+            if (startTime >= endTime) return;
             
             const segmentSeries = chartRef.current?.addSeries(LineSeries, {
               color: segment.type === 'up' ? '#2196f3' : '#ff9800',
@@ -598,8 +616,8 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
             
             if (segmentSeries) {
               segmentSeries.setData([
-                { time: parseTime(startCandle.time), value: segment.start_price || startCandle.close },
-                { time: parseTime(endCandle.time), value: segment.end_price || endCandle.close },
+                { time: startTime, value: segment.start_price || startCandle.close },
+                { time: endTime, value: segment.end_price || endCandle.close },
               ]);
               segmentLinesRef.current.push(segmentSeries as ISeriesApi<'Line'>);
             }
@@ -637,9 +655,6 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
           
           if (startIdx >= 0 && startIdx < candles.length && 
               endIdx >= 0 && endIdx < candles.length) {
-            const startCandle = candles[startIdx];
-            const endCandle = candles[endIdx];
-            
             // 绘制中枢上沿
             const upperSeries = chartRef.current?.addSeries(LineSeries, {
               color: '#9c27b0',

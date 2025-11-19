@@ -366,7 +366,7 @@ const MainPage: React.FC = () => {
           title={null}
           trigger="click"
           placement="right"
-          overlayInnerStyle={{ paddingTop: 8, paddingBottom: 12 }}
+          styles={{ body: { paddingTop: 8, paddingBottom: 12 } }}
         >
           <QuestionCircleOutlined 
             style={{ 
@@ -841,7 +841,7 @@ const MainPage: React.FC = () => {
                             children: (
                               <Descriptions 
                                 bordered 
-                                column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                column={{ xxl: 4, xl: 3, lg: 3, md: 2, sm: 1, xs: 1 }}
                                 size="middle"
                                 layout="vertical"
                                 items={(() => {
