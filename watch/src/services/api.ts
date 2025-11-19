@@ -1,18 +1,18 @@
 /**
  * API服务 - 封装所有后端API调用
  */
-import axios, { AxiosResponse } from 'axios';
-import {
+import axios, { type AxiosResponse } from 'axios';
+import type {
   ApiResponse,
   Position,
   Order,
   AnalysisResult,
   HotStock,
   IndicatorInfoResponse,
-} from '../types';
+} from '../types/index';
 
 // API基础URL
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 // 创建axios实例
 const api = axios.create({

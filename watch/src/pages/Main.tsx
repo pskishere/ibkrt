@@ -46,13 +46,13 @@ import {
   getHotStocks,
   getIndicatorInfo,
 } from '../services/api';
-import {
+import type {
   Position,
   Order,
   AnalysisResult,
   HotStock,
   IndicatorInfo,
-} from '../types';
+} from '../types/index';
 import TradingViewChart from '../components/TradingViewChart';
 import './Main.css';
 
@@ -90,7 +90,7 @@ const MainPage: React.FC = () => {
   const [stockOptions, setStockOptions] = useState<StockOption[]>([]);
   
   // 防抖定时器引用
-  const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // 技术指标解释信息
   const [indicatorInfoMap, setIndicatorInfoMap] = useState<Record<string, IndicatorInfo>>({});

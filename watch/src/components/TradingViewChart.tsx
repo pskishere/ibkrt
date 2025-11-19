@@ -6,16 +6,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { 
   createChart, 
-  IChartApi, 
-  ISeriesApi, 
+  type IChartApi, 
+  type ISeriesApi, 
   ColorType, 
-  Time, 
-  UTCTimestamp,
+  type Time, 
+  type UTCTimestamp,
   CandlestickSeries,
   LineSeries,
   HistogramSeries,
 } from 'lightweight-charts';
-import { Indicators, Candle } from '../types';
+import type { Indicators, Candle } from '../types/index';
 
 interface TradingViewChartProps {
   symbol: string;
