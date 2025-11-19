@@ -11,8 +11,8 @@ import type {
   IndicatorInfoResponse,
 } from '../types/index';
 
-// API基础URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+// API基础URL - 使用相对路径，通过Nginx反向代理
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 // 创建axios实例
 const api = axios.create({
