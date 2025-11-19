@@ -79,17 +79,23 @@ export interface Indicators {
   williams_r?: number;
   atr?: number;
   atr_percent?: number;
-  // 新增指标
+  // 新增现代指标
   cci?: number;
-  cci_signal?: string;
+  cci_signal?: string;  // 'overbought' | 'oversold' | 'neutral'
   adx?: number;
+  adx_signal?: string;  // 'strong_trend' | 'trend' | 'weak_trend'
   plus_di?: number;
   minus_di?: number;
   vwap?: number;
-  vwap_signal?: string;
+  vwap_20?: number;
+  vwap_signal?: string;  // 'above' | 'below' | 'at'
+  vwap_deviation?: number;
   sar?: number;
-  sar_signal?: string;
+  sar_signal?: string;  // 'buy' | 'sell'
+  sar_trend?: string;  // 'up' | 'down'
   sar_distance_pct?: number;
+  sar_af?: number;
+  sar_ep?: number;
   // 其他指标
   volatility_20?: number;
   volume_ratio?: number;

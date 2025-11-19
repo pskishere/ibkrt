@@ -1460,66 +1460,102 @@ class IBGateway(EWrapper, EClient):
             elif atr_pct < 1.5:
                 signals['signals'].append(f'✅ 低波动(ATR {atr_pct:.1f}%) - 适合持仓')
         
-        # 14. CCI顺势指标
+        # 14. CCI顺势指标（权重增强）
         if 'cci' in indicators:
             cci = indicators['cci']
             cci_signal = indicators.get('cci_signal', 'neutral')
             if cci_signal == 'overbought':
-                signals['signals'].append(f'🔴 CCI={cci:.1f} 超买区域 - 可能回调')
-                signals['score'] -= 15
+                if cci > 200:
+                    signals['signals'].append(f'🔴 CCI={cci:.1f} 极度超买 - 强烈回调信号')
+                    signals['score'] -= 22
+                else:
+                    signals['signals'].append(f'🔴 CCI={cci:.1f} 超买区域 - 可能回调')
+                    signals['score'] -= 18
             elif cci_signal == 'oversold':
-                signals['signals'].append(f'🟢 CCI={cci:.1f} 超卖区域 - 可能反弹')
-                signals['score'] += 15
+                if cci < -200:
+                    signals['signals'].append(f'🟢 CCI={cci:.1f} 极度超卖 - 强烈反弹信号')
+                    signals['score'] += 22
+                else:
+                    signals['signals'].append(f'🟢 CCI={cci:.1f} 超卖区域 - 可能反弹')
+                    signals['score'] += 18
         
-        # 15. ADX趋势强度
+        # 15. ADX趋势强度（权重优化）
         if 'adx' in indicators:
             adx = indicators['adx']
             adx_signal = indicators.get('adx_signal', 'weak_trend')
-            adx_direction = indicators.get('trend_direction', 'neutral')
+            plus_di = indicators.get('plus_di', 0)
+            minus_di = indicators.get('minus_di', 0)
             
             if adx_signal == 'strong_trend':
-                if adx_direction == 'up':
-                    signals['signals'].append(f'🚀 ADX={adx:.1f} 强势上涨趋势 - 顺势做多')
-                    signals['score'] += 20
-                elif adx_direction == 'down':
-                    signals['signals'].append(f'⚠️ ADX={adx:.1f} 强势下跌趋势 - 观望或做空')
-                    signals['score'] -= 20
-            elif adx_signal == 'weak_trend':
-                signals['signals'].append(f'📊 ADX={adx:.1f} 趋势不明显 - 震荡行情')
+                if plus_di > minus_di:
+                    if adx > 40:
+                        signals['signals'].append(f'🚀 ADX={adx:.1f} 极强上涨趋势(+DI={plus_di:.1f}) - 强烈看多')
+                        signals['score'] += 25
+                    else:
+                        signals['signals'].append(f'📈 ADX={adx:.1f} 强势上涨趋势(+DI={plus_di:.1f}) - 顺势做多')
+                        signals['score'] += 20
+                else:
+                    if adx > 40:
+                        signals['signals'].append(f'⚠️ ADX={adx:.1f} 极强下跌趋势(-DI={minus_di:.1f}) - 强烈看空')
+                        signals['score'] -= 25
+                    else:
+                        signals['signals'].append(f'📉 ADX={adx:.1f} 强势下跌趋势(-DI={minus_di:.1f}) - 观望或做空')
+                        signals['score'] -= 20
+            elif adx_signal == 'trend':
+                if plus_di > minus_di:
+                    signals['signals'].append(f'📈 ADX={adx:.1f} 中等上涨趋势 - 可关注')
+                    signals['score'] += 8
+                else:
+                    signals['signals'].append(f'📉 ADX={adx:.1f} 中等下跌趋势 - 谨慎')
+                    signals['score'] -= 8
+            else:
+                signals['signals'].append(f'📊 ADX={adx:.1f} 无明显趋势 - 震荡行情')
         
-        # 16. VWAP价格位置
+        # 16. VWAP价格位置（机构成本线分析）
         if 'vwap' in indicators and 'current_price' in indicators:
             vwap = indicators['vwap']
             current_price = indicators['current_price']
+            vwap_deviation = indicators.get('vwap_deviation', 0)
             vwap_signal = indicators.get('vwap_signal', 'at')
             
             if vwap_signal == 'above':
-                signals['signals'].append(f'📈 价格在VWAP(${vwap:.2f})之上 - 多头信号')
-                signals['score'] += 10
+                if vwap_deviation > 3:
+                    signals['signals'].append(f'💰 价格远高于VWAP(${vwap:.2f}, +{vwap_deviation:.1f}%) - 强势多头')
+                    signals['score'] += 15
+                else:
+                    signals['signals'].append(f'📈 价格在VWAP(${vwap:.2f}, +{vwap_deviation:.1f}%)之上 - 多头信号')
+                    signals['score'] += 12
             elif vwap_signal == 'below':
-                signals['signals'].append(f'📉 价格在VWAP(${vwap:.2f})之下 - 空头信号')
-                signals['score'] -= 10
+                if vwap_deviation < -3:
+                    signals['signals'].append(f'📉 价格远低于VWAP(${vwap:.2f}, {vwap_deviation:.1f}%) - 弱势空头')
+                    signals['score'] -= 15
+                else:
+                    signals['signals'].append(f'📉 价格在VWAP(${vwap:.2f}, {vwap_deviation:.1f}%)之下 - 空头信号')
+                    signals['score'] -= 12
+            else:
+                signals['signals'].append(f'⚖️ 价格等于VWAP(${vwap:.2f}) - 平衡状态')
         
-        # 17. SAR转向信号
+        # 17. SAR转向信号（抛物线止损）
         if 'sar' in indicators:
             sar = indicators['sar']
             sar_signal = indicators.get('sar_signal', 'hold')
             sar_trend = indicators.get('sar_trend', 'neutral')
+            sar_distance = indicators.get('sar_distance_pct', 0)
             
             if sar_signal == 'buy':
                 if sar_trend == 'up':
-                    signals['signals'].append(f'🟢 SAR=${sar:.2f} 看涨信号')
+                    signals['signals'].append(f'🟢 SAR=${sar:.2f}({sar_distance:.1f}%) 持续看涨')
                     signals['score'] += 15
                 else:
-                    signals['signals'].append(f'🟢 SAR=${sar:.2f} 转向看涨')
-                    signals['score'] += 18
+                    signals['signals'].append(f'🚀 SAR=${sar:.2f}({sar_distance:.1f}%) 转向看涨 - 关键买入信号')
+                    signals['score'] += 20
             elif sar_signal == 'sell':
                 if sar_trend == 'down':
-                    signals['signals'].append(f'🔴 SAR=${sar:.2f} 看跌信号')
+                    signals['signals'].append(f'🔴 SAR=${sar:.2f}({sar_distance:.1f}%) 持续看跌')
                     signals['score'] -= 15
                 else:
-                    signals['signals'].append(f'🔴 SAR=${sar:.2f} 转向看跌')
-                    signals['score'] -= 18
+                    signals['signals'].append(f'⚠️ SAR=${sar:.2f}({sar_distance:.1f}%) 转向看跌 - 关键卖出信号')
+                    signals['score'] -= 20
                 
         # 综合建议
         score = signals['score']
@@ -3360,8 +3396,8 @@ def main():
     # 自动连接到IB TWS（带重试）
     logger.info("自动连接到IB TWS...")
     
-    # 在 Docker 环境中使用 host.docker.internal 连接宿主机
-    ib_host = os.getenv('IB_GATEWAY_HOST', 'host.docker.internal')
+    # 从环境变量读取连接配置，默认本地连接
+    ib_host = os.getenv('IB_GATEWAY_HOST', '127.0.0.1')
     ib_port = int(os.getenv('IB_GATEWAY_PORT', '7496'))
     
     logger.info(f"尝试连接 IB Gateway: {ib_host}:{ib_port}")
