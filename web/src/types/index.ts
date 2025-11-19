@@ -69,6 +69,9 @@ export interface Indicators {
   bb_upper?: number;
   bb_middle?: number;
   bb_lower?: number;
+  bb_upper_series?: number[];  // 布林带上轨历史数据
+  bb_middle_series?: number[]; // 布林带中轨历史数据
+  bb_lower_series?: number[];  // 布林带下轨历史数据
   ma5?: number;
   ma10?: number;
   ma20?: number;

@@ -310,7 +310,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
   }, [indicators, candles, indicatorVisibility]);
 
   /**
-   * 绘制布林带
+   * 绘制布林带趋势线
    */
   useEffect(() => {
     if (!chartRef.current || !indicators || !candles || candles.length === 0) return;
@@ -329,7 +329,81 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
 
     if (!indicatorVisibility.bb) return;
 
-    if (indicators.bb_upper !== undefined && indicators.bb_middle !== undefined && indicators.bb_lower !== undefined) {
+    // 调试：打印布林带数据
+    console.log('布林带指标数据:', {
+      has_upper_series: !!indicators.bb_upper_series,
+      has_middle_series: !!indicators.bb_middle_series,
+      has_lower_series: !!indicators.bb_lower_series,
+      upper_series_length: indicators.bb_upper_series?.length,
+      middle_series_length: indicators.bb_middle_series?.length,
+      lower_series_length: indicators.bb_lower_series?.length,
+      bb_upper: indicators.bb_upper,
+      bb_middle: indicators.bb_middle,
+      bb_lower: indicators.bb_lower,
+    });
+
+    // 使用历史序列数据绘制趋势线
+    if (indicators.bb_upper_series && indicators.bb_middle_series && indicators.bb_lower_series) {
+      const upperSeries = indicators.bb_upper_series;
+      const middleSeries = indicators.bb_middle_series;
+      const lowerSeries = indicators.bb_lower_series;
+      
+      // 布林带数据从第20个K线开始（period=20）
+      const startIndex = candles.length - upperSeries.length;
+      
+      // 绘制上轨趋势线
+      const upperData = upperSeries.map((value, idx) => ({
+        time: parseTime(candles[startIndex + idx].time),
+        value: value,
+      }));
+      
+      const upperLine = chartRef.current.addSeries(LineSeries, {
+        color: '#FF6B6B',
+        lineWidth: 1,
+        title: 'BB上轨',
+        priceScaleId: 'left',
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      upperLine.setData(upperData);
+      bbSeriesRefs.current.set('upper', upperLine as ISeriesApi<'Line'>);
+
+      // 绘制中轨趋势线
+      const middleData = middleSeries.map((value, idx) => ({
+        time: parseTime(candles[startIndex + idx].time),
+        value: value,
+      }));
+      
+      const middleLine = chartRef.current.addSeries(LineSeries, {
+        color: '#FFD93D',
+        lineWidth: 1,
+        title: 'BB中轨',
+        priceScaleId: 'left',
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      middleLine.setData(middleData);
+      bbSeriesRefs.current.set('middle', middleLine as ISeriesApi<'Line'>);
+
+      // 绘制下轨趋势线
+      const lowerData = lowerSeries.map((value, idx) => ({
+        time: parseTime(candles[startIndex + idx].time),
+        value: value,
+      }));
+      
+      const lowerLine = chartRef.current.addSeries(LineSeries, {
+        color: '#6BCB77',
+        lineWidth: 1,
+        title: 'BB下轨',
+        priceScaleId: 'left',
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      lowerLine.setData(lowerData);
+      bbSeriesRefs.current.set('lower', lowerLine as ISeriesApi<'Line'>);
+    }
+    // 向后兼容：如果没有历史序列，使用旧的静态值方式
+    else if (indicators.bb_upper !== undefined && indicators.bb_middle !== undefined && indicators.bb_lower !== undefined) {
       const bbData = candles.map((candle) => ({
         time: parseTime(candle.time),
         upper: indicators.bb_upper!,
@@ -397,7 +471,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
 
     const sarSeries = chartRef.current.addSeries(LineSeries, {
       color: indicators.sar_signal === 'bullish' ? '#4caf50' : '#f44336',
-      lineWidth: 2,
+      lineWidth: 1,
       lineStyle: 3, // 点状线
       title: 'SAR',
       priceScaleId: 'left',
@@ -432,7 +506,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
 
     const vwapSeries = chartRef.current.addSeries(LineSeries, {
       color: '#ff9800',
-      lineWidth: 2,
+      lineWidth: 1,
       lineStyle: 0, // 实线
       title: 'VWAP',
       priceScaleId: 'left',
@@ -596,7 +670,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
             
             const strokeSeries = chartRef.current?.addSeries(LineSeries, {
               color: stroke.type === 'up' ? '#4caf50' : '#f44336',
-              lineWidth: 2,
+              lineWidth: 1,
               lineStyle: 0, // 实线
               priceScaleId: 'left',
             });
@@ -656,7 +730,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
             
             const segmentSeries = chartRef.current?.addSeries(LineSeries, {
               color: segment.type === 'up' ? '#2196f3' : '#ff9800',
-              lineWidth: 3,
+              lineWidth: 2,
               lineStyle: 0, // 实线
               priceScaleId: 'left',
             });
@@ -705,7 +779,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
             // 绘制中枢上沿
             const upperSeries = chartRef.current?.addSeries(LineSeries, {
               color: '#9c27b0',
-              lineWidth: 2,
+              lineWidth: 1,
               lineStyle: 2, // 虚线
               priceScaleId: 'left',
             });
@@ -713,7 +787,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
             // 绘制中枢下沿
             const lowerSeries = chartRef.current?.addSeries(LineSeries, {
               color: '#9c27b0',
-              lineWidth: 2,
+              lineWidth: 1,
               lineStyle: 2, // 虚线
               priceScaleId: 'left',
             });
@@ -911,7 +985,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
             cursor: 'pointer',
           }}
         >
-          布林带
+          布林线
         </button>
         <button
           onClick={() => toggleIndicator('sar')}
