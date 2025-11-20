@@ -4,12 +4,12 @@
  * 支持技术指标和缠论分析的可视化
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { 
-  createChart, 
-  type IChartApi, 
-  type ISeriesApi, 
-  ColorType, 
-  type Time, 
+import {
+  createChart,
+  type IChartApi,
+  type ISeriesApi,
+  ColorType,
+  type Time,
   type UTCTimestamp,
   CandlestickSeries,
   LineSeries,
@@ -102,12 +102,12 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
         fontSize: 12,
       },
       grid: {
-        vertLines: { 
+        vertLines: {
           color: theme === 'light' ? '#e1e3eb' : '#2a2e39',
           style: 0,
           visible: true,
         },
-        horzLines: { 
+        horzLines: {
           color: theme === 'light' ? '#e1e3eb' : '#2a2e39',
           style: 0,
           visible: true,
@@ -191,7 +191,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
       priceLineVisible: false,
     });
     volumeSeriesRef.current = volumeSeries as ISeriesApi<'Histogram'>;
-    
+
     // 设置成交量系列的缩放边距
     chart.priceScale('').applyOptions({
       scaleMargins: {
@@ -282,9 +282,9 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     // 计算并绘制MA线
     maPeriods.forEach(({ period, color, visible }) => {
       if (!visible) return;
-      
+
       const maData: { time: Time; value: number }[] = [];
-      
+
       for (let i = period - 1; i < candles.length; i++) {
         const sum = candles.slice(i - period + 1, i + 1).reduce((acc, c) => acc + c.close, 0);
         const avg = sum / period;
@@ -347,16 +347,16 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
       const upperSeries = indicators.bb_upper_series;
       const middleSeries = indicators.bb_middle_series;
       const lowerSeries = indicators.bb_lower_series;
-      
+
       // 布林带数据从第20个K线开始（period=20）
       const startIndex = candles.length - upperSeries.length;
-      
+
       // 绘制上轨趋势线
       const upperData = upperSeries.map((value, idx) => ({
         time: parseTime(candles[startIndex + idx].time),
         value: value,
       }));
-      
+
       const upperLine = chartRef.current.addSeries(LineSeries, {
         color: '#FF6B6B',
         lineWidth: 1,
@@ -373,7 +373,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
         time: parseTime(candles[startIndex + idx].time),
         value: value,
       }));
-      
+
       const middleLine = chartRef.current.addSeries(LineSeries, {
         color: '#FFD93D',
         lineWidth: 1,
@@ -390,7 +390,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
         time: parseTime(candles[startIndex + idx].time),
         value: value,
       }));
-      
+
       const lowerLine = chartRef.current.addSeries(LineSeries, {
         color: '#6BCB77',
         lineWidth: 1,
@@ -567,7 +567,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
   }, [indicators, candles, indicatorVisibility.pivotPoints]);
 
   /**
-   * 绘制缠论分型
+   * 绘制缠论分型（优化版数据结构）
    */
   useEffect(() => {
     if (!candleSeriesRef.current || !indicators || !candles || candles.length === 0) {
@@ -595,25 +595,51 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
           return;
         }
 
-        if (indicators.fractals && Array.isArray(indicators.fractals)) {
+        // 支持新的数据结构：fractals.top_fractals 和 fractals.bottom_fractals
+        if (indicators.fractals && typeof indicators.fractals === 'object') {
           const markers: any[] = [];
-          
-          indicators.fractals.forEach((fractal: any) => {
-            if (fractal && fractal.index !== undefined && fractal.price !== undefined) {
-              const candleIndex = fractal.index;
-              if (candleIndex >= 0 && candleIndex < candles.length) {
-                const candle = candles[candleIndex];
-                markers.push({
-                  time: parseTime(candle.time),
-                  position: fractal.type === 'top' ? 'aboveBar' : 'belowBar',
-                  color: fractal.type === 'top' ? '#f44336' : '#4caf50',
-                  shape: fractal.type === 'top' ? 'arrowDown' : 'arrowUp',
-                  size: 1,
-                  text: fractal.type === 'top' ? '顶' : '底',
-                });
+
+          // 处理顶分型
+          const topFractals = (indicators.fractals as any).top_fractals || [];
+          if (Array.isArray(topFractals)) {
+            topFractals.forEach((fractal: any) => {
+              if (fractal && fractal.index !== undefined && fractal.price !== undefined) {
+                const candleIndex = fractal.index;
+                if (candleIndex >= 0 && candleIndex < candles.length) {
+                  const candle = candles[candleIndex];
+                  markers.push({
+                    time: parseTime(candle.time),
+                    position: 'aboveBar',
+                    color: '#ef5350',
+                    shape: 'arrowDown',
+                    size: 1,
+                    text: '⬇',
+                  });
+                }
               }
-            }
-          });
+            });
+          }
+
+          // 处理底分型
+          const bottomFractals = (indicators.fractals as any).bottom_fractals || [];
+          if (Array.isArray(bottomFractals)) {
+            bottomFractals.forEach((fractal: any) => {
+              if (fractal && fractal.index !== undefined && fractal.price !== undefined) {
+                const candleIndex = fractal.index;
+                if (candleIndex >= 0 && candleIndex < candles.length) {
+                  const candle = candles[candleIndex];
+                  markers.push({
+                    time: parseTime(candle.time),
+                    position: 'belowBar',
+                    color: '#26a69a',
+                    shape: 'arrowUp',
+                    size: 1,
+                    text: '⬆',
+                  });
+                }
+              }
+            });
+          }
 
           seriesAny.setMarkers(markers);
           fractalMarkersRef.current = markers;
@@ -621,7 +647,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
           seriesAny.setMarkers([]);
         }
       } catch (error) {
-        console.error('Error setting markers:', error);
+        console.error('Error setting fractal markers:', error);
       }
     }, 50);
 
@@ -653,28 +679,28 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
         if (stroke && stroke.start_index !== undefined && stroke.end_index !== undefined) {
           const startIdx = stroke.start_index;
           const endIdx = stroke.end_index;
-          
+
           // 确保开始和结束索引不同，避免重复时间戳
           if (startIdx === endIdx) return;
-          
-          if (startIdx >= 0 && startIdx < candles.length && 
-              endIdx >= 0 && endIdx < candles.length) {
+
+          if (startIdx >= 0 && startIdx < candles.length &&
+            endIdx >= 0 && endIdx < candles.length) {
             const startCandle = candles[startIdx];
             const endCandle = candles[endIdx];
-            
+
             const startTime = parseTime(startCandle.time);
             const endTime = parseTime(endCandle.time);
-            
+
             // 再次检查时间是否相同，确保数据有序
             if (startTime >= endTime) return;
-            
+
             const strokeSeries = chartRef.current?.addSeries(LineSeries, {
               color: stroke.type === 'up' ? '#4caf50' : '#f44336',
               lineWidth: 1,
               lineStyle: 0, // 实线
               priceScaleId: 'left',
             });
-            
+
             if (strokeSeries) {
               strokeSeries.setData([
                 { time: startTime, value: stroke.start_price || startCandle.close },
@@ -713,28 +739,28 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
         if (segment && segment.start_index !== undefined && segment.end_index !== undefined) {
           const startIdx = segment.start_index;
           const endIdx = segment.end_index;
-          
+
           // 确保开始和结束索引不同，避免重复时间戳
           if (startIdx === endIdx) return;
-          
-          if (startIdx >= 0 && startIdx < candles.length && 
-              endIdx >= 0 && endIdx < candles.length) {
+
+          if (startIdx >= 0 && startIdx < candles.length &&
+            endIdx >= 0 && endIdx < candles.length) {
             const startCandle = candles[startIdx];
             const endCandle = candles[endIdx];
-            
+
             const startTime = parseTime(startCandle.time);
             const endTime = parseTime(endCandle.time);
-            
+
             // 再次检查时间是否相同，确保数据有序
             if (startTime >= endTime) return;
-            
+
             const segmentSeries = chartRef.current?.addSeries(LineSeries, {
               color: segment.type === 'up' ? '#2196f3' : '#ff9800',
               lineWidth: 2,
               lineStyle: 0, // 实线
               priceScaleId: 'left',
             });
-            
+
             if (segmentSeries) {
               segmentSeries.setData([
                 { time: startTime, value: segment.start_price || startCandle.close },
@@ -773,9 +799,9 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
         if (centralBank && centralBank.start_index !== undefined && centralBank.end_index !== undefined) {
           const startIdx = centralBank.start_index;
           const endIdx = centralBank.end_index;
-          
-          if (startIdx >= 0 && startIdx < candles.length && 
-              endIdx >= 0 && endIdx < candles.length) {
+
+          if (startIdx >= 0 && startIdx < candles.length &&
+            endIdx >= 0 && endIdx < candles.length) {
             // 绘制中枢上沿
             const upperSeries = chartRef.current?.addSeries(LineSeries, {
               color: '#9c27b0',
@@ -783,7 +809,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
               lineStyle: 2, // 虚线
               priceScaleId: 'left',
             });
-            
+
             // 绘制中枢下沿
             const lowerSeries = chartRef.current?.addSeries(LineSeries, {
               color: '#9c27b0',
@@ -791,19 +817,19 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
               lineStyle: 2, // 虚线
               priceScaleId: 'left',
             });
-            
+
             if (upperSeries && lowerSeries && centralBank.high !== undefined && centralBank.low !== undefined) {
               const timeRange = [];
               for (let i = startIdx; i <= endIdx && i < candles.length; i++) {
                 timeRange.push(parseTime(candles[i].time));
               }
-              
+
               const upperData = timeRange.map(time => ({ time, value: centralBank.high }));
               const lowerData = timeRange.map(time => ({ time, value: centralBank.low }));
-              
+
               upperSeries.setData(upperData);
               lowerSeries.setData(lowerData);
-              
+
               centralBankAreasRef.current.push(upperSeries as ISeriesApi<'Line'>, lowerSeries as ISeriesApi<'Line'>);
             }
           }
@@ -817,8 +843,8 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
    */
   const hasChanlunData = (): boolean => {
     if (!indicators) return false;
-    return !!(indicators.fractals || indicators.strokes || indicators.segments || 
-              indicators.central_banks || indicators.trend_type);
+    return !!(indicators.fractals || indicators.strokes || indicators.segments ||
+      indicators.central_banks || indicators.trend_type);
   };
 
   /**
@@ -826,55 +852,56 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
    */
   const getChanlunSummary = (): string[] => {
     if (!indicators) return [];
-    
+
     const summary: string[] = [];
-    
+
     if (indicators.trend_type) {
-      const trendText = indicators.trend_type === 'up' ? '上涨' : 
-                       indicators.trend_type === 'down' ? '下跌' : '盘整';
+      const trendText = indicators.trend_type === 'up' ? '上涨' :
+        indicators.trend_type === 'down' ? '下跌' : '盘整';
       summary.push(`走势类型: ${trendText}`);
     }
-    
-    if (indicators.fractals) {
-      const fractals = Array.isArray(indicators.fractals) ? indicators.fractals : [];
-      const topFractals = fractals.filter((f: any) => f?.type === 'top').length;
-      const bottomFractals = fractals.filter((f: any) => f?.type === 'bottom').length;
-      if (topFractals > 0 || bottomFractals > 0) {
-        summary.push(`分型: 顶分型 ${topFractals}个, 底分型 ${bottomFractals}个`);
+
+    // 支持新的fractals数据结构
+    if (indicators.fractals && typeof indicators.fractals === 'object') {
+      const fractalsData = indicators.fractals as any;
+      const topFractals = Array.isArray(fractalsData.top_fractals) ? fractalsData.top_fractals : [];
+      const bottomFractals = Array.isArray(fractalsData.bottom_fractals) ? fractalsData.bottom_fractals : [];
+      if (topFractals.length > 0 || bottomFractals.length > 0) {
+        summary.push(`分型: 顶分型 ${topFractals.length}个, 底分型 ${bottomFractals.length}个`);
       }
     }
-    
+
     if (indicators.strokes) {
       const strokes = Array.isArray(indicators.strokes) ? indicators.strokes : [];
       if (strokes.length > 0) {
         summary.push(`笔: ${strokes.length}条`);
       }
     }
-    
+
     if (indicators.segments) {
       const segments = Array.isArray(indicators.segments) ? indicators.segments : [];
       if (segments.length > 0) {
         summary.push(`线段: ${segments.length}条`);
       }
     }
-    
+
     if (indicators.central_banks) {
       const centralBanks = Array.isArray(indicators.central_banks) ? indicators.central_banks : [];
       if (centralBanks.length > 0) {
         summary.push(`中枢: ${centralBanks.length}个`);
       }
     }
-    
+
     return summary;
   };
 
   if (!symbol) {
     return (
-      <div style={{ 
-        width: '100%', 
-        height: `${height}px`, 
-        display: 'flex', 
-        alignItems: 'center', 
+      <div style={{
+        width: '100%',
+        height: `${height}px`,
+        display: 'flex',
+        alignItems: 'center',
         justifyContent: 'center',
         color: '#999',
       }}>
@@ -1103,8 +1130,8 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
           fontSize: '13px',
           color: theme === 'light' ? '#666' : '#ccc',
         }}>
-          <div style={{ 
-            fontWeight: 600, 
+          <div style={{
+            fontWeight: 600,
             marginBottom: '8px',
             color: theme === 'light' ? '#333' : '#fff',
           }}>

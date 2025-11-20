@@ -1289,223 +1289,8 @@ const MainPage: React.FC = () => {
                     style={{ marginTop: 24 }}
                   />
 
-                  {/* 缠论分析 */}
-                  {(analysisResult.indicators.fractals || analysisResult.indicators.strokes || analysisResult.indicators.segments || analysisResult.indicators.central_banks) && (
-                    <Collapse
-                      ghost
-                      defaultActiveKey={['chanlun']}
-                      items={[{
-                        key: 'chanlun',
-                        label: (
-                          <span>
-                            <BarChartOutlined style={{ marginRight: 8 }} />
-                            缠论分析
-                          </span>
-                        ),
-                        children: (
-                          <Descriptions
-                            bordered
-                            column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
-                            size="middle"
-                            layout="vertical"
-                            items={(() => {
-                              const items = [];
-                              const indicators = analysisResult.indicators;
 
-                              if (indicators.trend_type) {
-                                items.push({
-                                  label: createIndicatorLabel('走势类型', 'trend_type'),
-                                  span: 1,
-                                  children: (
-                                    <Tag color={
-                                      indicators.trend_type === 'up' ? 'success' :
-                                        indicators.trend_type === 'down' ? 'error' : 'default'
-                                    }>
-                                      {indicators.trend_type === 'up' ? '上涨' :
-                                        indicators.trend_type === 'down' ? '下跌' : '盘整'}
-                                    </Tag>
-                                  ),
-                                });
-                              }
 
-                              if (indicators.fractal_count) {
-                                items.push({
-                                  label: createIndicatorLabel('分型数量', 'fractals'),
-                                  span: 1,
-                                  children: (
-                                    <Space>
-                                      <span>顶分型: {indicators.fractal_count.top || 0}</span>
-                                      <span>底分型: {indicators.fractal_count.bottom || 0}</span>
-                                    </Space>
-                                  ),
-                                });
-                              }
-
-                              if (indicators.stroke_count !== undefined) {
-                                items.push({
-                                  label: createIndicatorLabel('笔数量', 'strokes'),
-                                  span: 1,
-                                  children: indicators.stroke_count,
-                                });
-                              }
-
-                              if (indicators.segment_count !== undefined) {
-                                items.push({
-                                  label: createIndicatorLabel('线段数量', 'segments'),
-                                  span: 1,
-                                  children: indicators.segment_count,
-                                });
-                              }
-
-                              if (indicators.central_bank_count !== undefined) {
-                                items.push({
-                                  label: createIndicatorLabel('中枢数量', 'central_banks'),
-                                  span: 1,
-                                  children: indicators.central_bank_count,
-                                });
-                              }
-
-                              if (indicators.latest_stroke) {
-                                items.push({
-                                  label: createIndicatorLabel('最新笔', 'strokes'),
-                                  span: 2,
-                                  children: (
-                                    <Space>
-                                      <Tag color={indicators.latest_stroke.type === 'up' ? 'success' : 'error'}>
-                                        {indicators.latest_stroke.type === 'up' ? '上涨笔' : '下跌笔'}
-                                      </Tag>
-                                      <span>
-                                        ${formatValue(indicators.latest_stroke.start_price)} → ${formatValue(indicators.latest_stroke.end_price)}
-                                      </span>
-                                      <span style={{
-                                        color: indicators.latest_stroke.price_change_pct >= 0 ? '#3f8600' : '#cf1322'
-                                      }}>
-                                        ({indicators.latest_stroke.price_change_pct >= 0 ? '+' : ''}{formatValue(indicators.latest_stroke.price_change_pct)}%)
-                                      </span>
-                                    </Space>
-                                  ),
-                                });
-                              }
-
-                              if (indicators.latest_segment) {
-                                items.push({
-                                  label: createIndicatorLabel('最新线段', 'segments'),
-                                  span: 2,
-                                  children: (
-                                    <Space>
-                                      <Tag color={indicators.latest_segment.type === 'up' ? 'success' : 'error'}>
-                                        {indicators.latest_segment.type === 'up' ? '上涨线段' : '下跌线段'}
-                                      </Tag>
-                                      <span>
-                                        ${formatValue(indicators.latest_segment.start_price)} → ${formatValue(indicators.latest_segment.end_price)}
-                                      </span>
-                                      <span style={{
-                                        color: indicators.latest_segment.price_change_pct >= 0 ? '#3f8600' : '#cf1322'
-                                      }}>
-                                        ({indicators.latest_segment.price_change_pct >= 0 ? '+' : ''}{formatValue(indicators.latest_segment.price_change_pct)}%)
-                                      </span>
-                                    </Space>
-                                  ),
-                                });
-                              }
-
-                              if (indicators.latest_central_bank) {
-                                items.push({
-                                  label: createIndicatorLabel('最新中枢', 'central_banks'),
-                                  span: 4,
-                                  children: (
-                                    <Space>
-                                      <span>上沿: <strong>${formatValue(indicators.latest_central_bank.high)}</strong></span>
-                                      <span>下沿: <strong>${formatValue(indicators.latest_central_bank.low)}</strong></span>
-                                      <span>中心: <strong>${formatValue(indicators.latest_central_bank.center)}</strong></span>
-                                      <span>宽度: {formatValue(indicators.latest_central_bank.width_pct, 2)}%</span>
-                                      <Tag color={
-                                        indicators.latest_central_bank.position === 'above' ? 'success' :
-                                          indicators.latest_central_bank.position === 'below' ? 'error' : 'default'
-                                      }>
-                                        {indicators.latest_central_bank.position === 'above' ? '上方' :
-                                          indicators.latest_central_bank.position === 'below' ? '下方' : '中枢内'}
-                                      </Tag>
-                                    </Space>
-                                  ),
-                                });
-                              }
-
-                              if (indicators.latest_top_fractal) {
-                                items.push({
-                                  label: createIndicatorLabel('最新顶分型', 'fractals'),
-                                  span: 2,
-                                  children: (
-                                    <Space>
-                                      <span style={{ fontSize: 16, fontWeight: 600, color: '#fa8c16' }}>
-                                        ${formatValue(indicators.latest_top_fractal.price)}
-                                      </span>
-                                      <span style={{ color: '#666' }}>
-                                        距离: {formatValue(indicators.latest_top_fractal.distance_pct, 2)}%
-                                      </span>
-                                    </Space>
-                                  ),
-                                });
-                              }
-
-                              if (indicators.latest_bottom_fractal) {
-                                items.push({
-                                  label: createIndicatorLabel('最新底分型', 'fractals'),
-                                  span: 2,
-                                  children: (
-                                    <Space>
-                                      <span style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
-                                        ${formatValue(indicators.latest_bottom_fractal.price)}
-                                      </span>
-                                      <span style={{ color: '#666' }}>
-                                        距离: {formatValue(indicators.latest_bottom_fractal.distance_pct, 2)}%
-                                      </span>
-                                    </Space>
-                                  ),
-                                });
-                              }
-
-                              if (indicators.trading_points) {
-                                items.push({
-                                  label: '买卖点',
-                                  span: 4,
-                                  children: (
-                                    <Space wrap>
-                                      {indicators.trading_points.buy_points && indicators.trading_points.buy_points.length > 0 && (
-                                        <>
-                                          {indicators.trading_points.buy_points.map((point: any, index: number) => (
-                                            <Tag key={`buy-${index}`} color="success">
-                                              {point.type}: ${formatValue(point.price)}
-                                            </Tag>
-                                          ))}
-                                        </>
-                                      )}
-                                      {indicators.trading_points.sell_points && indicators.trading_points.sell_points.length > 0 && (
-                                        <>
-                                          {indicators.trading_points.sell_points.map((point: any, index: number) => (
-                                            <Tag key={`sell-${index}`} color="error">
-                                              {point.type}: ${formatValue(point.price)}
-                                            </Tag>
-                                          ))}
-                                        </>
-                                      )}
-                                      {(!indicators.trading_points.buy_points || indicators.trading_points.buy_points.length === 0) &&
-                                        (!indicators.trading_points.sell_points || indicators.trading_points.sell_points.length === 0) && (
-                                          <span style={{ color: '#999' }}>暂无买卖点信号</span>
-                                        )}
-                                    </Space>
-                                  ),
-                                });
-                              }
-
-                              return items;
-                            })()}
-                          />
-                        ),
-                      }]}
-                      style={{ marginTop: 24 }}
-                    />
-                  )}
 
 
 
@@ -2102,6 +1887,368 @@ const MainPage: React.FC = () => {
                                 return items;
                               })()}
                             />
+                          ),
+                        }]}
+                        style={{ marginTop: 24 }}
+                      />
+                    )}
+
+                  {/* 缠论分析 */}
+                  {(analysisResult.indicators.fractals || analysisResult.indicators.strokes ||
+                    analysisResult.indicators.segments || analysisResult.indicators.central_banks) && (
+                      <Collapse
+                        ghost
+                        defaultActiveKey={['chanlun']}
+                        items={[{
+                          key: 'chanlun',
+                          label: (
+                            <span>
+                              <BarChartOutlined style={{ marginRight: 8 }} />
+                              {createIndicatorLabel('缠论分析 (Chan Theory)', 'chanlun')}
+                            </span>
+                          ),
+                          children: (
+                            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                              {/* 数据充足性评估 */}
+                              {analysisResult.indicators.data_adequacy && (
+                                <Descriptions
+                                  bordered
+                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                  size="small"
+                                  items={[
+                                    {
+                                      label: '数据评估',
+                                      span: 4,
+                                      children: (
+                                        <Space>
+                                          {analysisResult.indicators.data_adequacy.is_adequate ? (
+                                            <Tag color="success">✅ 数据充足</Tag>
+                                          ) : (
+                                            <Tag color="warning">⚠️ 数据有限</Tag>
+                                          )}
+                                          <Text>{analysisResult.indicators.data_adequacy.recommendation}</Text>
+                                          <Text type="secondary">
+                                            ({analysisResult.indicators.data_adequacy.total_bars}根K线)
+                                          </Text>
+                                        </Space>
+                                      ),
+                                    },
+                                  ]}
+                                />
+                              )}
+
+                              {/* 分型统计 */}
+                              {analysisResult.indicators.fractals && (
+                                <Descriptions
+                                  bordered
+                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                  size="small"
+                                  title="📍 分型统计"
+                                  items={[
+                                    {
+                                      label: '顶分型',
+                                      span: 1,
+                                      children: (
+                                        <Tag color="red">
+                                          {analysisResult.indicators.fractals.top_fractals?.length || 0}个
+                                        </Tag>
+                                      ),
+                                    },
+                                    {
+                                      label: '底分型',
+                                      span: 1,
+                                      children: (
+                                        <Tag color="green">
+                                          {analysisResult.indicators.fractals.bottom_fractals?.length || 0}个
+                                        </Tag>
+                                      ),
+                                    },
+                                    {
+                                      label: '总计',
+                                      span: 1,
+                                      children: (
+                                        <Tag>
+                                          {(analysisResult.indicators.fractals.top_fractals?.length || 0) +
+                                            (analysisResult.indicators.fractals.bottom_fractals?.length || 0)}个
+                                        </Tag>
+                                      ),
+                                    },
+                                  ]}
+                                />
+                              )}
+
+                              {/* 笔统计 */}
+                              {analysisResult.indicators.strokes && analysisResult.indicators.strokes.length > 0 && (
+                                <div>
+                                  <Descriptions
+                                    bordered
+                                    column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                    size="small"
+                                    title="📏 笔统计（至少5根K线, 0.3%幅度）"
+                                    items={[
+                                      {
+                                        label: '笔数量',
+                                        span: 1,
+                                        children: <Tag>{analysisResult.indicators.strokes.length}个</Tag>,
+                                      },
+                                      {
+                                        label: '最新笔',
+                                        span: 3,
+                                        children: (() => {
+                                          const latest = analysisResult.indicators.strokes[analysisResult.indicators.strokes.length - 1];
+                                          return (
+                                            <Space>
+                                              {latest.type === 'up' ? (
+                                                <Tag color="green">📈 上涨笔</Tag>
+                                              ) : (
+                                                <Tag color="red">📉 下跌笔</Tag>
+                                              )}
+                                              <Text>{latest.k_count}根K线</Text>
+                                              <Text type={latest.price_change_pct >= 0 ? 'success' : 'danger'}>
+                                                {latest.price_change_pct >= 0 ? '+' : ''}
+                                                {formatValue(latest.price_change_pct)}%
+                                              </Text>
+                                            </Space>
+                                          );
+                                        })(),
+                                      },
+                                    ]}
+                                  />
+                                </div>
+                              )}
+
+                              {/* 线段统计 */}
+                              {analysisResult.indicators.segments && analysisResult.indicators.segments.length > 0 && (
+                                <Descriptions
+                                  bordered
+                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                  size="small"
+                                  title="📊 线段统计（至少3笔）"
+                                  items={[
+                                    {
+                                      label: '线段数量',
+                                      span: 1,
+                                      children: <Tag>{analysisResult.indicators.segments.length}个</Tag>,
+                                    },
+                                    {
+                                      label: '最新线段',
+                                      span: 3,
+                                      children: (() => {
+                                        const latest = analysisResult.indicators.segments[analysisResult.indicators.segments.length - 1];
+                                        return (
+                                          <Space>
+                                            {latest.type === 'up' ? (
+                                              <Tag color="green">📈 上涨线段</Tag>
+                                            ) : (
+                                              <Tag color="red">📉 下跌线段</Tag>
+                                            )}
+                                            <Text>包含{latest.stroke_count}笔</Text>
+                                            <Text type={latest.price_change_pct >= 0 ? 'success' : 'danger'}>
+                                              {latest.price_change_pct >= 0 ? '+' : ''}
+                                              {formatValue(latest.price_change_pct)}%
+                                            </Text>
+                                          </Space>
+                                        );
+                                      })(),
+                                    },
+                                  ]}
+                                />
+                              )}
+
+                              {/* 中枢 */}
+                              {analysisResult.indicators.central_banks && analysisResult.indicators.central_banks.length > 0 && (
+                                <div>
+                                  <Text strong style={{ fontSize: 14, marginBottom: 8, display: 'block' }}>
+                                    🏦 中枢（至少3段重叠）
+                                  </Text>
+                                  {analysisResult.indicators.central_banks.map((cb: any, index: number) => {
+                                    const currentPrice = analysisResult.indicators.current_price || 0;
+                                    let position = '';
+                                    let positionColor = 'default';
+
+                                    if (currentPrice > cb.high) {
+                                      position = '💰 在中枢上方';
+                                      positionColor = 'green';
+                                    } else if (currentPrice < cb.low) {
+                                      position = '📉 在中枢下方';
+                                      positionColor = 'red';
+                                    } else {
+                                      position = '⚖️ 在中枢内震荡';
+                                      positionColor = 'orange';
+                                    }
+
+                                    const typeLabel = cb.type === 'standard' ? '标准3段' : cb.type === 'extended' ? '扩展多段' : '';
+
+                                    return (
+                                      <Descriptions
+                                        key={index}
+                                        bordered
+                                        column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                        size="small"
+                                        style={{ marginTop: index > 0 ? 8 : 0 }}
+                                        items={[
+                                          {
+                                            label: `中枢${index + 1}`,
+                                            span: 1,
+                                            children: <Tag color={positionColor}>{position}</Tag>,
+                                          },
+                                          {
+                                            label: '价格区间',
+                                            span: 1,
+                                            children: `$${formatValue(cb.low)} - $${formatValue(cb.high)}`,
+                                          },
+                                          {
+                                            label: '宽度',
+                                            span: 1,
+                                            children: `${formatValue(cb.width_pct)}%`,
+                                          },
+                                          {
+                                            label: '类型',
+                                            span: 1,
+                                            children: <Tag>{cb.segment_count}段{typeLabel}</Tag>,
+                                          },
+                                        ]}
+                                      />
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* 买卖点 */}
+                              {analysisResult.indicators.trading_points && (
+                                <>
+                                  {/* 买入点 */}
+                                  {analysisResult.indicators.trading_points.buy_points &&
+                                    analysisResult.indicators.trading_points.buy_points.length > 0 && (
+                                      <div>
+                                        <Text strong style={{ fontSize: 14, marginBottom: 8, display: 'block' }}>
+                                          💰 缠论买入点
+                                        </Text>
+                                        {analysisResult.indicators.trading_points.buy_points.map((bp: any, index: number) => (
+                                          <Descriptions
+                                            key={index}
+                                            bordered
+                                            column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                            size="small"
+                                            style={{ marginTop: index > 0 ? 8 : 0 }}
+                                            items={[
+                                              {
+                                                label: '类型',
+                                                span: 1,
+                                                children: (
+                                                  <Space>
+                                                    <Tag color="green">{bp.type}</Tag>
+                                                    {bp.has_divergence && <Tag color="volcano">🔥 背驰</Tag>}
+                                                  </Space>
+                                                ),
+                                              },
+                                              {
+                                                label: '价格',
+                                                span: 1,
+                                                children: `$${formatValue(bp.price)}`,
+                                              },
+                                              {
+                                                label: '置信度',
+                                                span: 1,
+                                                children: (
+                                                  <Space>
+                                                    {bp.confidence >= 0.8 && '🌟'}
+                                                    {bp.confidence >= 0.6 && bp.confidence < 0.8 && '⭐'}
+                                                    <Text>{(bp.confidence * 100).toFixed(0)}%</Text>
+                                                  </Space>
+                                                ),
+                                              },
+                                              {
+                                                label: '说明',
+                                                span: 3,
+                                                children: bp.description,
+                                              },
+                                            ]}
+                                          />
+                                        ))}
+                                      </div>
+                                    )}
+
+                                  {/* 卖出点 */}
+                                  {analysisResult.indicators.trading_points.sell_points &&
+                                    analysisResult.indicators.trading_points.sell_points.length > 0 && (
+                                      <div>
+                                        <Text strong style={{ fontSize: 14, marginBottom: 8, display: 'block' }}>
+                                          💸 缠论卖出点
+                                        </Text>
+                                        {analysisResult.indicators.trading_points.sell_points.map((sp: any, index: number) => (
+                                          <Descriptions
+                                            key={index}
+                                            bordered
+                                            column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                            size="small"
+                                            style={{ marginTop: index > 0 ? 8 : 0 }}
+                                            items={[
+                                              {
+                                                label: '类型',
+                                                span: 1,
+                                                children: (
+                                                  <Space>
+                                                    <Tag color="red">{sp.type}</Tag>
+                                                    {sp.has_divergence && <Tag color="volcano">🔥 背驰</Tag>}
+                                                  </Space>
+                                                ),
+                                              },
+                                              {
+                                                label: '价格',
+                                                span: 1,
+                                                children: `$${formatValue(sp.price)}`,
+                                              },
+                                              {
+                                                label: '置信度',
+                                                span: 1,
+                                                children: (
+                                                  <Space>
+                                                    {sp.confidence >= 0.8 && '🌟'}
+                                                    {sp.confidence >= 0.6 && sp.confidence < 0.8 && '⭐'}
+                                                    <Text>{(sp.confidence * 100).toFixed(0)}%</Text>
+                                                  </Space>
+                                                ),
+                                              },
+                                              {
+                                                label: '说明',
+                                                span: 3,
+                                                children: sp.description,
+                                              },
+                                            ]}
+                                          />
+                                        ))}
+                                      </div>
+                                    )}
+                                </>
+                              )}
+
+                              {/* 走势类型 */}
+                              {analysisResult.indicators.trend_type && (
+                                <Descriptions
+                                  bordered
+                                  column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
+                                  size="small"
+                                  items={[
+                                    {
+                                      label: '缠论走势类型',
+                                      span: 4,
+                                      children: (
+                                        <Space>
+                                          {analysisResult.indicators.trend_type === 'up' ? (
+                                            <Tag color="green" icon={<RiseOutlined />}>📈 上涨趋势</Tag>
+                                          ) : analysisResult.indicators.trend_type === 'down' ? (
+                                            <Tag color="red" icon={<FallOutlined />}>📉 下跌趋势</Tag>
+                                          ) : (
+                                            <Tag color="default" icon={<RightOutlined />}>➡️ 震荡/盘整</Tag>
+                                          )}
+                                        </Space>
+                                      ),
+                                    },
+                                  ]}
+                                />
+                              )}
+                            </Space>
                           ),
                         }]}
                         style={{ marginTop: 24 }}

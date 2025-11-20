@@ -135,10 +135,79 @@ export interface Indicators {
   pivot_s2?: number;
   pivot_s3?: number;
   fundamental_data?: any;
-  fractals?: any;
-  strokes?: any;
-  segments?: any;
-  central_banks?: any;
+  // 缠论分析（优化版）
+  fractals?: {
+    top_fractals: Array<{
+      index: number;
+      price: number;
+      date_index: number;
+    }>;
+    bottom_fractals: Array<{
+      index: number;
+      price: number;
+      date_index: number;
+    }>;
+  };
+  strokes?: Array<{
+    start_index: number;
+    end_index: number;
+    start_price: number;
+    end_price: number;
+    type: 'up' | 'down';
+    length: number;
+    k_count: number;  // 包含的原始K线数量
+    price_change: number;
+    price_change_pct: number;
+  }>;
+  segments?: Array<{
+    start_index: number;
+    end_index: number;
+    start_price: number;
+    end_price: number;
+    type: 'up' | 'down';
+    stroke_count: number;  // 包含的笔数量
+    price_change: number;
+    price_change_pct: number;
+  }>;
+  central_banks?: Array<{
+    start_index: number;
+    end_index: number;
+    high: number;  // ZG 中枢高
+    low: number;   // ZD 中枢低
+    center: number;
+    width: number;
+    width_pct: number;
+    segment_count: number;  // 包含的线段数量
+    type: 'standard' | 'extended' | 'expanded';
+  }>;
+  trading_points?: {
+    buy_points: Array<{
+      type: string;  // '一买', '二买', '三买'
+      index: number;
+      price: number;
+      description: string;
+      confidence: number;  // 置信度 0-1
+      has_divergence: boolean;  // 是否有背驰
+    }>;
+    sell_points: Array<{
+      type: string;  // '一卖', '二卖', '三卖'
+      index: number;
+      price: number;
+      description: string;
+      confidence: number;
+      has_divergence: boolean;
+    }>;
+  };
+  trend_type?: 'up' | 'down' | 'unknown';  // 缠论走势类型
+  data_adequacy?: {
+    total_bars: number;
+    fractal_count: number;
+    stroke_count: number;
+    segment_count: number;
+    central_bank_count: number;
+    is_adequate: boolean;
+    recommendation: string;
+  };
   resistance_20d_high?: number;
   support_20d_low?: number;
   [key: string]: any;

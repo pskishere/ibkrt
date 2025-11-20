@@ -1076,6 +1076,120 @@ class TradingCLI:
                 
                 print()
             
+            # 缠论分析
+            if 'fractals' in indicators or 'strokes' in indicators or 'segments' in indicators or 'central_banks' in indicators:
+                print("=" * 70)
+                print("🔮 缠论分析 (Chan Theory)")
+                print("=" * 70)
+                
+                # 数据充足性评估
+                if 'data_adequacy' in indicators:
+                    adequacy = indicators['data_adequacy']
+                    total_bars = adequacy.get('total_bars', 0)
+                    is_adequate = adequacy.get('is_adequate', False)
+                    recommendation = adequacy.get('recommendation', '')
+                    
+                    status_icon = "✅" if is_adequate else "⚠️"
+                    print(f"{status_icon} {recommendation} ({total_bars}根K线)")
+                
+                # 分型
+                if 'fractals' in indicators and indicators['fractals']:
+                    fractals = indicators['fractals']
+                    top_count = len(fractals.get('top_fractals', []))
+                    bottom_count = len(fractals.get('bottom_fractals', []))
+                    print(f"📍 分型: 顶分型{top_count}个 | 底分型{bottom_count}个")
+                
+                # 笔
+                if 'strokes' in indicators and len(indicators.get('strokes', [])) > 0:
+                    strokes = indicators['strokes']
+                    print(f"📏 笔: {len(strokes)}个 (至少5根K线, 0.3%幅度)")
+                    # 显示最新几笔
+                    if strokes:
+                        latest_strokes = strokes[-min(3, len(strokes)):]
+                        for i, stroke in enumerate(latest_strokes):
+                            is_latest = (i == len(latest_strokes) - 1)
+                            prefix = "   ➤最新笔:" if is_latest else "   "
+                            direction_icon = "📈" if stroke['type'] == 'up' else "📉"
+                            print(f"{prefix} {direction_icon} {stroke['type'].upper()} "
+                                  f"{stroke['start_index']}->{stroke['end_index']} "
+                                  f"({stroke['k_count']}根K线, {stroke['price_change_pct']:+.2f}%)")
+                
+                # 线段
+                if 'segments' in indicators and len(indicators.get('segments', [])) > 0:
+                    segments = indicators['segments']
+                    print(f"📊 线段: {len(segments)}个 (至少3笔)")
+                    # 显示最新线段
+                    if segments:
+                        latest = segments[-1]
+                        direction_icon = "📈" if latest['type'] == 'up' else "📉"
+                        print(f"   ➤最新线段: {direction_icon} {latest['type'].upper()} "
+                              f"包含{latest['stroke_count']}笔 "
+                              f"({latest['price_change_pct']:+.2f}%)")
+                
+                # 中枢
+                if 'central_banks' in indicators and len(indicators.get('central_banks', [])) > 0:
+                    cbs = indicators['central_banks']
+                    print(f"🏦 中枢: {len(cbs)}个 (至少3段重叠)")
+                    for idx, cb in enumerate(cbs, 1):
+                        # 判断当前价格相对中枢的位置
+                        position = ""
+                        current = indicators.get('current_price', 0)
+                        if current > cb['high']:
+                            position = "💰在中枢上方"
+                        elif current < cb['low']:
+                            position = "📉在中枢下方"
+                        else:
+                            position = "⚖️在中枢内震荡"
+                        
+                        cb_type = cb.get('type', 'standard')
+                        type_label = ""
+                        if cb_type == 'standard':
+                            type_label = "[标准3段]"
+                        elif cb_type == 'extended':
+                            type_label = "[扩展多段]"
+                        
+                        print(f"   中枢{idx}: ${cb['low']:.2f} - ${cb['high']:.2f} "
+                              f"(宽度{cb['width_pct']:.2f}%, {cb['segment_count']}段{type_label}) {position}")
+                
+                # 买卖点
+                if 'trading_points' in indicators:
+                    tp = indicators['trading_points']
+                    buy_points = tp.get('buy_points', [])
+                    sell_points = tp.get('sell_points', [])
+                    
+                    if buy_points:
+                        print(f"💰 缠论买入点: {len(buy_points)}个")
+                        for bp in buy_points:
+                            divergence = " 🔥(背驰)" if bp.get('has_divergence') else ""
+                            confidence = bp.get('confidence', 0) * 100
+                            conf_icon = "🌟" if confidence >= 80 else "⭐" if confidence >= 60 else ""
+                            print(f"   {conf_icon} {bp['type']}: ${bp['price']:.2f} "
+                                  f"(置信度{confidence:.0f}%){divergence}")
+                            print(f"      {bp['description']}")
+                    
+                    if sell_points:
+                        print(f"💸 缠论卖出点: {len(sell_points)}个")
+                        for sp in sell_points:
+                            divergence = " 🔥(背驰)" if sp.get('has_divergence') else ""
+                            confidence = sp.get('confidence', 0) * 100
+                            conf_icon = "🌟" if confidence >= 80 else "⭐" if confidence >= 60 else ""
+                            print(f"   {conf_icon} {sp['type']}: ${sp['price']:.2f} "
+                                  f"(置信度{confidence:.0f}%){divergence}")
+                            print(f"      {sp['description']}")
+                
+                # 趋势类型
+                if 'trend_type' in indicators:
+                    trend = indicators['trend_type']
+                    if trend == 'up':
+                        trend_desc = "📈 上涨趋势"
+                    elif trend == 'down':
+                        trend_desc = "📉 下跌趋势"
+                    else:
+                        trend_desc = "➡️ 震荡/盘整"
+                    print(f"🎯 缠论走势类型: {trend_desc}")
+                
+                print()
+            
             # 买卖信号
             if signals:
                 print("=" * 70)
