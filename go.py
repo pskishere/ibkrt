@@ -3,8 +3,9 @@
 # -*- coding: utf-8 -*-
 
 """
-基于IBAPI的实盘交易网关 - RESTful API服务
-提供账户信息、下单、撤单、持仓查询等HTTP接口
+基于yfinance的股票数据分析服务 - RESTful API服务
+提供技术指标分析、AI分析、K线数据缓存等功能
+数据来源：Yahoo Finance (yfinance)
 """
 
 # 标准库导入
@@ -14,16 +15,15 @@ import time
 import sqlite3
 import json
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+import pandas as pd
+import numpy as np
 
 # 第三方库导入
 import requests
+import yfinance as yf
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from ibapi.client import EClient
-from ibapi.contract import Contract
-from ibapi.order import Order
-from ibapi.wrapper import EWrapper
 
 # 技术指标模块导入
 from indicators import (
@@ -57,7 +57,7 @@ DB_PATH = 'stock_cache.db'
 
 def init_database():
     """
-    初始化SQLite数据库，创建分析结果缓存表和股票信息表
+    初始化SQLite数据库，创建分析结果缓存表、股票信息表和K线数据表
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -90,10 +90,33 @@ def init_database():
         )
     ''')
     
+    # 创廾K线数据表，用于缓存全量K线数据
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS kline_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            interval TEXT NOT NULL,
+            date TEXT NOT NULL,
+            open REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            close REAL NOT NULL,
+            volume INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(symbol, interval, date)
+        )
+    ''')
+    
     # 创建索引以提高查询速度
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_symbol_duration_bar_date 
         ON analysis_cache(symbol, duration, bar_size, query_date)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_kline_symbol_interval_date 
+        ON kline_data(symbol, interval, date DESC)
     ''')
     
     conn.commit()
@@ -224,897 +247,368 @@ def get_stock_name(symbol):
         return None
 
 
-class IBGateway(EWrapper, EClient):
+class YFinanceGateway:
     """
-    Interactive Brokers 交易网关
-    继承EWrapper处理回调，继承EClient发送请求
+    YFinance数据网关
+    提供股票数据查询、技术指标计算功能
     """
     
     def __init__(self):
-        EClient.__init__(self, self)
-        
         # 连接状态
-        self.connected = False
-        self.next_order_id = None
-        
-        # 数据存储
-        self.accounts = []
-        self.account_values = {}
-        self.positions = {}
-        self.orders = {}
-        self.executions = {}
-        
-        # 行情数据存储
-        self.market_data = {}  # 实时报价数据
-        self.historical_data = {}  # 历史数据
-        self.contract_details = {}  # 合约详情
-        self.fundamental_data = {}  # 基本面数据
-        self.req_id_counter = 1000  # 请求ID计数器
-        self._fundamental_errors = {}  # 基本面数据错误跟踪（用于静默处理430错误）
-        self.request_errors = {}  # 记录请求错误: {reqId: {'code': int, 'message': str}}
+        self.connected = True  # yfinance不需要连接，始终为True
         
         # 线程锁
         self.lock = threading.Lock()
         
-    # ==================== 连接相关回调 ====================
+        logger.info("YFinanceGateway初始化完成")
     
-    def nextValidId(self, orderId: int):
+    def get_stock_info(self, symbol: str):
         """
-        接收下一个有效的订单ID
+        获取股票详细信息
         """
-        # 不调用super()以避免打印ANSWER日志
-        self.next_order_id = orderId
-        
-    def connectAck(self):
-        """
-        连接确认回调
-        """
-        pass
-        
-    def connectionClosed(self):
-        """
-        连接关闭回调
-        """
-        super().connectionClosed()
-        self.connected = False
-        logger.warning("连接已关闭")
-        
-    # ==================== 账户相关回调 ====================
-    
-    def managedAccounts(self, accountsList: str):
-        """
-        接收管理的账户列表
-        """
-        # 不调用super()以避免打印ANSWER日志
-        self.accounts = accountsList.split(',')
-        
-    def updateAccountValue(self, key: str, val: str, currency: str, accountName: str):
-        """
-        接收账户信息更新
-        """
-        # 不调用super()以避免打印ANSWER日志
-        # super().updateAccountValue(key, val, currency, accountName)
-        
-        if accountName not in self.account_values:
-            self.account_values[accountName] = {}
-            
-        self.account_values[accountName][key] = {
-            'value': val,
-            'currency': currency
-        }
-        
-    def updatePortfolio(self, contract: Contract, position: float,
-                       marketPrice: float, marketValue: float,
-                       averageCost: float, unrealizedPNL: float,
-                       realizedPNL: float, accountName: str):
-        """
-        接收持仓更新
-        """
-        # 不调用super()以避免打印ANSWER日志
-        # super().updatePortfolio(contract, position, marketPrice, marketValue,
-        #                        averageCost, unrealizedPNL, realizedPNL, accountName)
-        
-        key = f"{contract.symbol}_{contract.secType}_{contract.exchange}"
-        
-        with self.lock:
-            self.positions[key] = {
-                'symbol': contract.symbol,
-                'secType': contract.secType,
-                'exchange': contract.exchange,
-                'position': position,
-                'marketPrice': marketPrice,
-                'marketValue': marketValue,
-                'averageCost': averageCost,
-                'unrealizedPNL': unrealizedPNL,
-                'realizedPNL': realizedPNL,
-                'accountName': accountName
-            }
-            
-    def accountDownloadEnd(self, accountName: str):
-        """
-        账户数据下载完成
-        """
-        # 不调用super()以避免打印ANSWER日志
-        pass
-        
-    # ==================== 订单相关回调 ====================
-    
-    def orderStatus(self, orderId: int, status: str, filled: float,
-                   remaining: float, avgFillPrice: float, permId: int,
-                   parentId: int, lastFillPrice: float, clientId: int,
-                   whyHeld: str, mktCapPrice: float):
-        """
-        接收订单状态更新
-        """
-        # 不调用super()以避免打印ANSWER日志
-        # super().orderStatus(orderId, status, filled, remaining,
-        #                    avgFillPrice, permId, parentId, lastFillPrice,
-        #                    clientId, whyHeld, mktCapPrice)
-        
-        with self.lock:
-            if orderId not in self.orders:
-                self.orders[orderId] = {}
-                
-            self.orders[orderId].update({
-                'status': status,
-                'filled': filled,
-                'remaining': remaining,
-                'avgFillPrice': avgFillPrice,
-                'permId': permId,
-                'lastFillPrice': lastFillPrice,
-                'timestamp': datetime.now().isoformat()
-            })
-        
-    def openOrder(self, orderId: int, contract: Contract, order: Order,
-                 orderState):
-        """
-        接收订单信息
-        """
-        # 不调用super()以避免打印ANSWER日志
-        # super().openOrder(orderId, contract, order, orderState)
-        
-        with self.lock:
-            if orderId not in self.orders:
-                self.orders[orderId] = {}
-                
-            self.orders[orderId].update({
-                'orderId': orderId,
-                'symbol': contract.symbol,
-                'secType': contract.secType,
-                'exchange': contract.exchange,
-                'action': order.action,
-                'orderType': order.orderType,
-                'totalQuantity': order.totalQuantity,
-                'lmtPrice': order.lmtPrice,
-                'auxPrice': order.auxPrice,
-                'status': orderState.status
-            })
-            
-    def execDetails(self, reqId: int, contract: Contract, execution):
-        """
-        接收成交明细
-        """
-        # 不调用super()以避免打印ANSWER日志
-        # super().execDetails(reqId, contract, execution)
-        
-        exec_id = execution.execId
-        
-        with self.lock:
-            self.executions[exec_id] = {
-                'execId': exec_id,
-                'orderId': execution.orderId,
-                'symbol': contract.symbol,
-                'secType': contract.secType,
-                'side': execution.side,
-                'shares': execution.shares,
-                'price': execution.price,
-                'time': execution.time,
-                'exchange': execution.exchange,
-                'cumQty': execution.cumQty,
-                'avgPrice': execution.avgPrice
-            }
-        
-    def error(self, reqId: int, errorCode: int, errorString: str):
-        """
-        接收错误信息
-        """
-        # 忽略信息提示和已知的可忽略错误
-        ignore_codes = [
-            2104, 2106, 2158,  # 连接信息提示
-            10148,  # 订单已在撤销中
-            10147,  # 订单已撤销
-            2119, 2120,  # 行情数据延迟提示
-            430,  # 指定证券没有基本面数据（正常情况，静默跳过）
-        ]
-        
-        # 记录基本面数据请求的错误码（用于静默处理）
-        if errorCode == 430 and reqId > 0:
-            with self.lock:
-                self._fundamental_errors[reqId] = errorCode
-            # 430错误完全静默处理，不调用super()也不记录日志
-            return
-        
-        # 记录重要错误（如200 - 证券不存在）
-        if reqId > 0 and errorCode in [200, 201, 162, 354, 10197]:  # 常见的证券相关错误
-            with self.lock:
-                self.request_errors[reqId] = {
-                    'code': errorCode,
-                    'message': errorString
-                }
-        
-        # 对于需要忽略的错误，不调用super()以避免打印日志
-        if errorCode in ignore_codes:
-            return
-        
-        # 其他错误才调用super()和记录日志
-        super().error(reqId, errorCode, errorString)
-        
-        # 订单相关错误特别标注
-        if reqId > 0 and errorCode >= 100:
-            logger.error(f"请求 #{reqId} 错误 [{errorCode}]: {errorString}")
-        else:
-            logger.error(f"[{errorCode}] {errorString}")
-                
-    # ==================== 行情数据回调 ====================
-    
-    def tickPrice(self, reqId: int, tickType: int, price: float, attrib):
-        """
-        接收实时价格数据
-        """
-        with self.lock:
-            if reqId not in self.market_data:
-                self.market_data[reqId] = {}
-            
-            # tickType: 1=买价, 2=卖价, 4=最新价, 6=最高, 7=最低, 9=收盘价
-            tick_names = {
-                1: 'bid', 2: 'ask', 4: 'last', 
-                6: 'high', 7: 'low', 9: 'close'
-            }
-            
-            if tickType in tick_names:
-                self.market_data[reqId][tick_names[tickType]] = price
-                
-    def tickSize(self, reqId: int, tickType: int, size: int):
-        """
-        接收实时数量数据
-        """
-        with self.lock:
-            if reqId not in self.market_data:
-                self.market_data[reqId] = {}
-            
-            # tickType: 0=买量, 3=卖量, 5=最新量, 8=成交量
-            tick_names = {
-                0: 'bid_size', 3: 'ask_size', 
-                5: 'last_size', 8: 'volume'
-            }
-            
-            if tickType in tick_names:
-                self.market_data[reqId][tick_names[tickType]] = size
-                
-    def historicalData(self, reqId: int, bar):
-        """
-        接收历史K线数据
-        """
-        with self.lock:
-            if reqId not in self.historical_data:
-                self.historical_data[reqId] = []
-            
-            self.historical_data[reqId].append({
-                'date': bar.date,
-                'open': bar.open,
-                'high': bar.high,
-                'low': bar.low,
-                'close': bar.close,
-                'volume': bar.volume,
-                'average': bar.average,
-                'barCount': bar.barCount
-            })
-            
-    def historicalDataEnd(self, reqId: int, start: str, end: str):
-        """
-        历史数据接收完成
-        """
-        logger.info(f"历史数据接收完成: reqId={reqId}")
-        
-    def contractDetails(self, reqId: int, contractDetails):
-        """
-        接收合约详情
-        """
-        with self.lock:
-            if reqId not in self.contract_details:
-                self.contract_details[reqId] = []
-            
-            contract = contractDetails.contract
-            
-            # 安全获取属性，避免AttributeError
-            details = {
-                'symbol': getattr(contract, 'symbol', ''),
-                'secType': getattr(contract, 'secType', ''),
-                'exchange': getattr(contract, 'exchange', ''),
-                'currency': getattr(contract, 'currency', ''),
-                'longName': getattr(contractDetails, 'longName', ''),
-                'industry': getattr(contractDetails, 'industry', ''),
-                'category': getattr(contractDetails, 'category', ''),
-                'subcategory': getattr(contractDetails, 'subcategory', ''),
-                'marketName': getattr(contractDetails, 'marketName', ''),
-                'tradingClass': getattr(contract, 'tradingClass', ''),
-                'minTick': getattr(contractDetails, 'minTick', 0),
-                'multiplier': getattr(contract, 'multiplier', ''),
-                'timeZoneId': getattr(contractDetails, 'timeZoneId', ''),
-                'tradingHours': getattr(contractDetails, 'tradingHours', ''),
-                'liquidHours': getattr(contractDetails, 'liquidHours', ''),
-                'conId': getattr(contract, 'conId', 0),
-                'localSymbol': getattr(contract, 'localSymbol', ''),
-            }
-            
-            self.contract_details[reqId].append(details)
-            
-    def contractDetailsEnd(self, reqId: int):
-        """
-        合约详情接收完成
-        """
-        logger.info(f"合约详情接收完成: reqId={reqId}")
-        
-    def fundamentalData(self, reqId: int, data: str):
-        """
-        接收基本面数据（XML格式）
-        """
-        with self.lock:
-            self.fundamental_data[reqId] = data
-        logger.info(f"基本面数据接收完成: reqId={reqId}")
-            
-    # ==================== 网关操作方法 ====================
-    
-    def connect_gateway(self, host='127.0.0.1', port=7496, client_id=1):
-        """
-        连接到IB TWS
-        """
-        logger.info(f"连接 {host}:{port}, ClientId: {client_id}")
-        
         try:
-            # 先断开已有连接
-            if self.isConnected():
-                logger.info("检测到已有连接，先断开")
-                self.disconnect()
-                time.sleep(1)
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
             
-            self.connect(host, port, client_id)
-            logger.info("Socket连接已建立，等待响应...")
+            if not info:
+                return None
             
-            # 启动消息处理线程
-            api_thread = threading.Thread(target=self.run, daemon=True)
-            api_thread.start()
-            
-            # 等待连接建立
-            timeout = 15
-            start_time = time.time()
-            
-            while self.next_order_id is None:
-                elapsed = time.time() - start_time
-                if elapsed > timeout:
-                    logger.error(f"连接超时({timeout}秒)")
-                    logger.error("可能的原因:")
-                    logger.error("  1. IB Gateway未完全启动")
-                    logger.error("  2. ClientId冲突（尝试修改client_id）")
-                    logger.error("  3. API设置未启用")
-                    self.disconnect()
-                    return False
-                    
-                # 每3秒打印一次等待信息
-                if int(elapsed) > 0 and int(elapsed) % 3 == 0 and elapsed - int(elapsed) < 0.2:
-                    logger.info(f"等待中... {int(elapsed)}秒")
-                    
-                time.sleep(0.1)
-                
-            self.connected = True
-            logger.info(f"连接成功！下一个订单ID: {self.next_order_id}")
-            
-            # 订阅账户更新
-            if self.accounts:
-                logger.info(f"订阅账户: {self.accounts}")
-                self.reqAccountUpdates(True, self.accounts[0])
-            
-            # 请求所有未完成订单
-            self.reqAllOpenOrders()
-                
-            return True
-            
+            return {
+                'symbol': symbol,
+                'longName': info.get('longName', info.get('shortName', symbol)),
+                'shortName': info.get('shortName', ''),
+                'exchange': info.get('exchange', ''),
+                'currency': info.get('currency', 'USD'),
+                'marketCap': info.get('marketCap', 0),
+                'regularMarketPrice': info.get('regularMarketPrice', 0),
+                'fiftyTwoWeekHigh': info.get('fiftyTwoWeekHigh', 0),
+                'fiftyTwoWeekLow': info.get('fiftyTwoWeekLow', 0),
+            }
         except Exception as e:
-            logger.error(f"连接异常: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return False
-            
-    def disconnect_gateway(self):
-        """
-        断开连接
-        """
-        if self.connected:
-            self.disconnect()
-            self.connected = False
-            
-    def create_stock_contract(self, symbol: str, exchange: str = 'SMART', currency: str = 'USD'):
-        """
-        创建股票合约
-        """
-        contract = Contract()
-        contract.symbol = symbol
-        contract.secType = 'STK'
-        contract.exchange = exchange
-        contract.currency = currency
-        return contract
-        
-    def create_order(self, action: str, quantity: float, order_type: str = 'MKT',
-                    limit_price: float = 0, aux_price: float = 0):
-        """
-        创建订单对象
-        """
-        order = Order()
-        order.action = action
-        order.totalQuantity = quantity
-        order.orderType = order_type
-        order.eTradeOnly = False
-        order.firmQuoteOnly = False
-        
-        if order_type == 'LMT':
-            order.lmtPrice = limit_price
-        elif order_type == 'STP':
-            order.auxPrice = aux_price
-            
-        return order
-        
-    def submit_order(self, contract: Contract, order: Order):
-        """
-        提交订单
-        """
-        if not self.connected or self.next_order_id is None:
+            logger.error(f"获取股票信息失败: {symbol}, 错误: {e}")
             return None
-            
-        order_id = self.next_order_id
-        self.placeOrder(order_id, contract, order)
-        self.next_order_id += 1
-        
-        logger.info(f"订单 #{order_id}: {order.action} {contract.symbol} x{order.totalQuantity}")
-        
-        # 短暂延迟后请求订单更新
-        time.sleep(0.5)
-        self.reqAllOpenOrders()
-        
-        return order_id
-        
-    def cancel_order(self, order_id: int):
+    
+    def get_fundamental_data(self, symbol: str):
         """
-        撤销订单
+        获取基本面数据（从yfinance）
+        返回公司财务数据、估值指标等
         """
-        if not self.connected:
-            logger.warning("未连接，无法撤销订单")
-            return False
-        
-        # 检查订单是否存在以及状态
-        with self.lock:
-            if order_id in self.orders:
-                status = self.orders[order_id].get('status', '')
-                logger.info(f"订单 #{order_id} 当前状态: {status}")
-                if status in ['Cancelled', 'PendingCancel', 'Filled']:
-                    logger.warning(f"订单 #{order_id} 状态为 {status}，无需撤销")
-                    return False
-            else:
-                logger.warning(f"订单 #{order_id} 不存在于本地缓存")
-            
-        self.cancelOrder(order_id)
-        logger.info(f"发送撤销请求: 订单 #{order_id}")
-        return True
-        
-    def get_account_summary(self):
-        """
-        获取账户摘要信息
-        """
-        if not self.account_values:
-            return None
-            
-        summary = {}
-        for account, values in self.account_values.items():
-            summary[account] = {
-                'netLiquidation': values.get('NetLiquidation', {}).get('value', 'N/A'),
-                'availableFunds': values.get('AvailableFunds', {}).get('value', 'N/A'),
-                'buyingPower': values.get('BuyingPower', {}).get('value', 'N/A'),
-                'totalCash': values.get('TotalCashValue', {}).get('value', 'N/A'),
-                'unrealizedPnL': values.get('UnrealizedPnL', {}).get('value', 'N/A'),
-                'realizedPnL': values.get('RealizedPnL', {}).get('value', 'N/A')
-            }
-            
-        return summary
-        
-    def get_positions(self):
-        """
-        获取持仓列表
-        """
-        with self.lock:
-            return dict(self.positions)
-            
-    def get_orders(self):
-        """
-        获取订单列表
-        """
-        with self.lock:
-            return dict(self.orders)
-            
-    def get_executions(self):
-        """
-        获取成交列表
-        """
-        with self.lock:
-            return dict(self.executions)
-            
-    def get_market_data(self, symbol: str, exchange: str = 'SMART', currency: str = 'USD'):
-        """
-        获取实时行情快照
-        """
-        if not self.connected:
-            return None
-            
-        # 创建合约
-        contract = self.create_stock_contract(symbol, exchange, currency)
-        
-        # 生成请求ID
-        req_id = self.req_id_counter
-        self.req_id_counter += 1
-        
-        # 清空旧数据
-        with self.lock:
-            self.market_data[req_id] = {'symbol': symbol}
-        
-        logger.info(f"请求行情数据: {symbol}, reqId={req_id}")
-        
-        # 请求实时数据（使用快照模式）
-        self.reqMktData(req_id, contract, "", True, False, [])
-        
-        # 等待数据返回，最多等待5秒
-        max_wait = 5
-        start_time = time.time()
-        data_received = False
-        
-        while time.time() - start_time < max_wait:
-            with self.lock:
-                data = self.market_data.get(req_id, {})
-                # 检查是否有价格数据（至少有一个价格字段）
-                if any(key in data for key in ['last', 'bid', 'ask', 'close']):
-                    data_received = True
-                    break
-            time.sleep(0.2)
-        
-        # 获取最终数据
-        with self.lock:
-            data = self.market_data.get(req_id, {}).copy()
-        
-        # 取消订阅
-        self.cancelMktData(req_id)
-        
-        if data_received:
-            logger.info(f"行情数据接收成功: {symbol}, 字段数: {len(data)}")
-        else:
-            logger.warning(f"行情数据接收超时: {symbol}")
-        
-        return data
-        
-    def get_historical_data(self, symbol: str, duration: str = '1 D', 
-                           bar_size: str = '5 mins', exchange: str = 'SMART', 
-                           currency: str = 'USD'):
-        """
-        获取历史数据
-        duration: 数据周期，如 '1 D', '1 W', '1 M'
-        bar_size: K线周期，如 '1 min', '5 mins', '1 hour', '1 day'
-        """
-        if not self.connected:
-            return None
-            
-        # 创建合约
-        contract = self.create_stock_contract(symbol, exchange, currency)
-        
-        # 生成请求ID
-        req_id = self.req_id_counter
-        self.req_id_counter += 1
-        
-        # 清空旧数据
-        with self.lock:
-            self.historical_data[req_id] = []
-        
-        logger.info(f"请求历史数据: {symbol}, {duration}, {bar_size}, reqId={req_id}")
-        
-        # 请求历史数据
-        end_datetime = ""  # 空字符串表示当前时间
-        what_to_show = "TRADES"
-        use_rth = 1  # 1=只使用常规交易时间, 0=包含盘前盘后
-        format_date = 1  # 1=yyyyMMdd HH:mm:ss格式
-        
-        self.reqHistoricalData(
-            req_id, contract, end_datetime, duration,
-            bar_size, what_to_show, use_rth, format_date, False, []
-        )
-        
-        # 等待数据返回（历史数据可能需要更长时间）
-        max_wait = 15
-        start_time = time.time()
-        data_complete = False
-        has_error = False
-        
-        while time.time() - start_time < max_wait:
-            # 检查是否有错误
-            with self.lock:
-                if req_id in self.request_errors:
-                    has_error = True
-                    break
-                    
-            with self.lock:
-                current_count = len(self.historical_data.get(req_id, []))
-                if current_count > 0:
-                    # 等待一段时间确保数据接收完整
-                    time.sleep(1)
-                    new_count = len(self.historical_data.get(req_id, []))
-                    # 如果数据不再增加，认为接收完成
-                    if new_count == current_count:
-                        data_complete = True
-                        break
-            time.sleep(0.3)
-        
-        # 检查是否有错误
-        error_info = None
-        with self.lock:
-            if req_id in self.request_errors:
-                error_info = self.request_errors[req_id].copy()
-                del self.request_errors[req_id]  # 清除错误记录
-        
-        # 如果有错误，返回None和错误信息
-        if error_info:
-            logger.warning(f"历史数据请求失败: {symbol}, 错误[{error_info['code']}]: {error_info['message']}")
-            return None, error_info
-        
-        # 获取数据
-        with self.lock:
-            data = self.historical_data.get(req_id, []).copy()
-        
-        if data_complete and data:
-            logger.info(f"历史数据接收成功: {symbol}, 数据条数: {len(data)}")
-        elif data:
-            logger.warning(f"历史数据可能不完整: {symbol}, 数据条数: {len(data)}")
-        else:
-            logger.warning(f"历史数据接收失败: {symbol}")
-        
-        return data, None  # 返回数据和错误信息（无错误为None）
-        
-    def get_stock_info(self, symbol: str, exchange: str = 'SMART', currency: str = 'USD'):
-        """
-        获取股票详细信息（合约详情）
-        """
-        if not self.connected:
-            return None
-            
-        # 创建合约
-        contract = self.create_stock_contract(symbol, exchange, currency)
-        
-        # 生成请求ID
-        req_id = self.req_id_counter
-        self.req_id_counter += 1
-        
-        # 清空旧数据
-        with self.lock:
-            self.contract_details[req_id] = []
-        
-        logger.info(f"请求合约详情: {symbol}, reqId={req_id}")
-        
-        # 请求合约详情
-        self.reqContractDetails(req_id, contract)
-        
-        # 等待数据返回
-        max_wait = 5
-        start_time = time.time()
-        
-        while time.time() - start_time < max_wait:
-            with self.lock:
-                if req_id in self.contract_details and len(self.contract_details[req_id]) > 0:
-                    break
-            time.sleep(0.2)
-        
-        # 获取数据
-        with self.lock:
-            data = self.contract_details.get(req_id, [])
-            
-        if data:
-            logger.info(f"合约详情接收成功: {symbol}")
-            return data[0] if len(data) == 1 else data
-        else:
-            logger.warning(f"合约详情接收失败: {symbol}")
-            return None
-            
-    def get_fundamental_data(self, symbol: str, report_type: str = 'ReportsFinSummary'):
-        """
-        获取基本面数据
-        report_type: ReportsFinSummary, ReportSnapshot, ReportsFinStatements, RESC, CalendarReport
-        """
-        if not self.connected:
-            return None
-            
-        # 创建合约
-        contract = self.create_stock_contract(symbol)
-        
-        # 生成请求ID
-        req_id = self.req_id_counter
-        self.req_id_counter += 1
-        
-        # 清空旧数据
-        with self.lock:
-            self.fundamental_data[req_id] = None
-        
-        logger.info(f"请求基本面数据: {symbol}, {report_type}, reqId={req_id}")
-        
-        # 请求基本面数据
-        self.reqFundamentalData(req_id, contract, report_type, [])
-        
-        # 等待数据返回
-        max_wait = 10
-        start_time = time.time()
-        
-        while time.time() - start_time < max_wait:
-            with self.lock:
-                # 检查是否收到数据
-                if req_id in self.fundamental_data and self.fundamental_data[req_id] is not None:
-                    break
-                # 检查是否是430错误（没有基本面数据），如果是则立即返回
-                if req_id in self._fundamental_errors:
-                    break
-            time.sleep(0.2)
-        
-        # 获取数据
-        with self.lock:
-            data = self.fundamental_data.get(req_id)
-            # 检查是否是430错误（没有基本面数据）
-            is_no_data_error = req_id in self._fundamental_errors
-            if is_no_data_error:
-                # 清除错误记录
-                del self._fundamental_errors[req_id]
-            
-        if data:
-            logger.info(f"基本面数据接收成功: {symbol}")
-            # 简单解析XML数据
-            return self._parse_fundamental_data(data)
-        else:
-            # 如果是430错误（没有基本面数据），静默跳过，不记录警告
-            if not is_no_data_error:
-                logger.warning(f"基本面数据接收失败: {symbol}")
-            return None
-            
-    def _parse_fundamental_data(self, xml_data: str):
-        """
-        解析基本面数据XML
-        """
-        import xml.etree.ElementTree as ET
-        
         try:
-            root = ET.fromstring(xml_data)
-            result = {}
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
             
-            # 1. 提取公司基本信息 (CoIDs)
-            co_ids = root.find('.//CoIDs')
-            if co_ids is not None:
-                for coid in co_ids.findall('CoID'):
-                    coid_type = coid.get('Type', '')
-                    if coid.text and coid.text.strip():
-                        if coid_type == 'CompanyName':
-                            result['CompanyName'] = coid.text.strip()
-                        elif coid_type == 'CIKNo':
-                            result['CIK'] = coid.text.strip()
+            if not info:
+                return None
             
-            # 2. 提取公司通用信息 (CoGeneralInfo)
-            co_info = root.find('.//CoGeneralInfo')
-            if co_info is not None:
-                employees = co_info.find('Employees')
-                if employees is not None and employees.text:
-                    result['Employees'] = employees.text.strip()
+            # 提取基本面关键指标
+            fundamental = {
+                # 公司信息
+                'companyName': info.get('longName', info.get('shortName', symbol)),
+                'sector': info.get('sector', ''),
+                'industry': info.get('industry', ''),
+                'website': info.get('website', ''),
+                'fullTimeEmployees': info.get('fullTimeEmployees', 0),
+                'businessSummary': info.get('longBusinessSummary', ''),
                 
-                shares_out = co_info.find('SharesOut')
-                if shares_out is not None and shares_out.text:
-                    result['SharesOutstanding'] = shares_out.text.strip()
-            
-            # 3. 提取交易所信息
-            exchange = root.find('.//Exchange')
-            if exchange is not None and exchange.text:
-                result['Exchange'] = exchange.text.strip()
-            
-            # 4. 提取财务比率 (Ratios)
-            ratios = root.find('.//Ratios')
-            if ratios is not None:
-                # 价格和成交量
-                price_group = ratios.find(".//Group[@ID='Price and Volume']")
-                if price_group is not None:
-                    for ratio in price_group.findall('Ratio'):
-                        field_name = ratio.get('FieldName', '')
-                        if ratio.text and ratio.text.strip():
-                            if field_name == 'NPRICE':
-                                result['Price'] = ratio.text.strip()
-                            elif field_name == 'NHIG':
-                                result['52WeekHigh'] = ratio.text.strip()
-                            elif field_name == 'NLOW':
-                                result['52WeekLow'] = ratio.text.strip()
-                            elif field_name == 'VOL10DAVG':
-                                result['AvgVolume10D'] = ratio.text.strip()
-                            elif field_name == 'EV':
-                                result['EnterpriseValue'] = ratio.text.strip()
+                # 市值与价格
+                'marketCap': info.get('marketCap', 0),
+                'enterpriseValue': info.get('enterpriseValue', 0),
+                'currentPrice': info.get('currentPrice', info.get('regularMarketPrice', 0)),
+                'fiftyTwoWeekHigh': info.get('fiftyTwoWeekHigh', 0),
+                'fiftyTwoWeekLow': info.get('fiftyTwoWeekLow', 0),
                 
-                # 利润表数据
-                income_group = ratios.find(".//Group[@ID='Income Statement']")
-                if income_group is not None:
-                    for ratio in income_group.findall('Ratio'):
-                        field_name = ratio.get('FieldName', '')
-                        if ratio.text and ratio.text.strip():
-                            if field_name == 'MKTCAP':
-                                result['MarketCap'] = ratio.text.strip()
-                            elif field_name == 'TTMREV':
-                                result['RevenueTTM'] = ratio.text.strip()
-                            elif field_name == 'TTMEBITD':
-                                result['EBITDATTM'] = ratio.text.strip()
-                            elif field_name == 'TTMNIAC':
-                                result['NetIncomeTTM'] = ratio.text.strip()
+                # 估值指标
+                'trailingPE': info.get('trailingPE', 0),  # 市盈率
+                'forwardPE': info.get('forwardPE', 0),  # 预期市盈率
+                'priceToBook': info.get('priceToBook', 0),  # 市净率
+                'priceToSales': info.get('priceToSalesTrailing12Months', 0),  # 市销率
+                'pegRatio': info.get('pegRatio', 0),  # PEG比率
+                
+                # 盈利能力
+                'profitMargins': info.get('profitMargins', 0),  # 净利润率
+                'operatingMargins': info.get('operatingMargins', 0),  # 营业利润率
+                'grossMargins': info.get('grossMargins', 0),  # 毛利率
+                'returnOnEquity': info.get('returnOnEquity', 0),  # ROE
+                'returnOnAssets': info.get('returnOnAssets', 0),  # ROA
+                
+                # 财务健康
+                'totalRevenue': info.get('totalRevenue', 0),  # 总收入
+                'revenuePerShare': info.get('revenuePerShare', 0),  # 每股收入
+                'totalDebt': info.get('totalDebt', 0),  # 总债务
+                'debtToEquity': info.get('debtToEquity', 0),  # 资产负债率
+                'currentRatio': info.get('currentRatio', 0),  # 流动比率
+                'quickRatio': info.get('quickRatio', 0),  # 速动比率
                 
                 # 每股数据
-                per_share_group = ratios.find(".//Group[@ID='Per share data']")
-                if per_share_group is not None:
-                    for ratio in per_share_group.findall('Ratio'):
-                        field_name = ratio.get('FieldName', '')
-                        if ratio.text and ratio.text.strip():
-                            if field_name == 'TTMEPSXCLX':
-                                result['EPS'] = ratio.text.strip()
-                            elif field_name == 'TTMREVPS':
-                                result['RevenuePerShare'] = ratio.text.strip()
-                            elif field_name == 'QBVPS':
-                                result['BookValuePerShare'] = ratio.text.strip()
-                            elif field_name == 'QCSHPS':
-                                result['CashPerShare'] = ratio.text.strip()
-                            elif field_name == 'TTMCFSHR':
-                                result['CashFlowPerShare'] = ratio.text.strip()
-                            elif field_name == 'TTMDIVSHR':
-                                result['DividendPerShare'] = ratio.text.strip()
+                'trailingEps': info.get('trailingEps', 0),  # 每股收益
+                'forwardEps': info.get('forwardEps', 0),  # 预期每股收益
+                'bookValue': info.get('bookValue', 0),  # 每股净资产
+                'cashPerShare': info.get('totalCash', 0) / info.get('sharesOutstanding', 1) if info.get('sharesOutstanding') else 0,
                 
-                # 其他比率
-                other_group = ratios.find(".//Group[@ID='Other Ratios']")
-                if other_group is not None:
-                    for ratio in other_group.findall('Ratio'):
-                        field_name = ratio.get('FieldName', '')
-                        if ratio.text and ratio.text.strip():
-                            if field_name == 'TTMGROSMGN':
-                                result['GrossMargin'] = ratio.text.strip()
-                            elif field_name == 'TTMROEPCT':
-                                result['ROE'] = ratio.text.strip()
-                            elif field_name == 'TTMPR2REV':
-                                result['ProfitMargin'] = ratio.text.strip()
-                            elif field_name == 'PEEXCLXOR':
-                                result['PE'] = ratio.text.strip()
-                            elif field_name == 'PRICE2BK':
-                                result['PriceToBook'] = ratio.text.strip()
+                # 股息
+                'dividendRate': info.get('dividendRate', 0),  # 股息率
+                'dividendYield': info.get('dividendYield', 0),  # 股息收益率
+                'payoutRatio': info.get('payoutRatio', 0),  # 股息支付率
+                
+                # 成长性
+                'revenueGrowth': info.get('revenueGrowth', 0),  # 收入增长率
+                'earningsGrowth': info.get('earningsGrowth', 0),  # 盈利增长率
+                'earningsQuarterlyGrowth': info.get('earningsQuarterlyGrowth', 0),  # 季度盈利增长
+                
+                # 分析师预期
+                'targetHighPrice': info.get('targetHighPrice', 0),  # 目标高价
+                'targetLowPrice': info.get('targetLowPrice', 0),  # 目标低价
+                'targetMeanPrice': info.get('targetMeanPrice', 0),  # 目标平均价
+                'recommendationKey': info.get('recommendationKey', ''),  # 分析师建议
+                'numberOfAnalystOpinions': info.get('numberOfAnalystOpinions', 0),  # 分析师数量
+            }
             
-            # 5. 提取预测数据 (ForecastData)
-            forecast = root.find('.//ForecastData')
-            if forecast is not None:
-                target_price = forecast.find(".//Ratio[@FieldName='TargetPrice']/Value")
-                if target_price is not None and target_price.text:
-                    result['TargetPrice'] = target_price.text.strip()
-                
-                consensus = forecast.find(".//Ratio[@FieldName='ConsRecom']/Value")
-                if consensus is not None and consensus.text:
-                    result['ConsensusRecommendation'] = consensus.text.strip()
-                
-                proj_eps = forecast.find(".//Ratio[@FieldName='ProjEPS']/Value")
-                if proj_eps is not None and proj_eps.text:
-                    result['ProjectedEPS'] = proj_eps.text.strip()
-                
-                proj_growth = forecast.find(".//Ratio[@FieldName='ProjLTGrowthRate']/Value")
-                if proj_growth is not None and proj_growth.text:
-                    result['ProjectedGrowthRate'] = proj_growth.text.strip()
+            return fundamental
             
-            return result if result else {'raw_xml': xml_data}
         except Exception as e:
-            logger.error(f"解析基本面数据失败: {e}")
-            return {'raw_xml': xml_data}
+            logger.error(f"获取基本面数据失败: {symbol}, 错误: {e}")
+            return None
+    
+    def _get_kline_from_cache(self, symbol: str, interval: str, start_date: str = None):
+        """
+        从数据库获取K线数据
+        """
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
             
+            if start_date:
+                cursor.execute('''
+                    SELECT date, open, high, low, close, volume
+                    FROM kline_data
+                    WHERE symbol = ? AND interval = ? AND date >= ?
+                    ORDER BY date ASC
+                ''', (symbol, interval, start_date))
+            else:
+                cursor.execute('''
+                    SELECT date, open, high, low, close, volume
+                    FROM kline_data
+                    WHERE symbol = ? AND interval = ?
+                    ORDER BY date ASC
+                ''', (symbol, interval))
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            if not rows:
+                return None
+            
+            # 转换为pandas DataFrame
+            df = pd.DataFrame(rows, columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
+            df['Date'] = pd.to_datetime(df['Date'])
+            df.set_index('Date', inplace=True)
+            
+            return df
+        except Exception as e:
+            logger.error(f"从缓存获取K线数据失败: {e}")
+            return None
+    
+    def _save_kline_to_cache(self, symbol: str, interval: str, df: pd.DataFrame):
+        """
+        保存K线数据到数据库（增量更新）
+        """
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            for date, row in df.iterrows():
+                date_str = date.strftime('%Y-%m-%d')
+                cursor.execute('''
+                    INSERT OR REPLACE INTO kline_data 
+                    (symbol, interval, date, open, high, low, close, volume, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (
+                    symbol,
+                    interval,
+                    date_str,
+                    float(row['Open']),
+                    float(row['High']),
+                    float(row['Low']),
+                    float(row['Close']),
+                    int(row['Volume'])
+                ))
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"K线数据已缓存: {symbol}, {interval}, {len(df)}条")
+        except Exception as e:
+            logger.error(f"保存K线数据失败: {e}")
+    
+    def get_historical_data(self, symbol: str, duration: str = '1 D', 
+                           bar_size: str = '5 mins', exchange: str = '', 
+                           currency: str = 'USD'):
+        """
+        获取历史数据，支持缓存和增量更新
+        默认缓存至少1年以上数据，保证日期连续性和最新日期为当日
+        duration: 数据周期，如 '1 D', '1 W', '1 M', '3 M', '1 Y'
+        bar_size: K线周期，如 '1 min', '5 mins', '1 hour', '1 day'
+        """
+        try:
+            # 转换bar_size为yfinance格式
+            interval_map = {
+                '1 min': '1m',
+                '2 mins': '2m',
+                '5 mins': '5m',
+                '15 mins': '15m',
+                '30 mins': '30m',
+                '1 hour': '1h',
+                '1 day': '1d',
+                '1 week': '1wk',
+                '1 month': '1mo'
+            }
+            
+            yf_interval = interval_map.get(bar_size, '1d')
+            
+            # 尝试从缓存获取数据
+            cached_df = self._get_kline_from_cache(symbol, yf_interval)
+            
+            # 统一时区处理
+            # 获取当前本地时间（中国时区）
+            now_local = pd.Timestamp.now()
+            # 转换为美国东部时间（ET）来判断是否是交易日
+            import pytz
+            et_tz = pytz.timezone('US/Eastern')
+            now_et = now_local.tz_localize('UTC').astimezone(et_tz) if now_local.tzinfo is None else now_local.astimezone(et_tz)
+            
+            # 美股交易时间：09:30-16:00 ET
+            # 如果当前ET时间在收盘后（16:00后），则今天的数据可用
+            # 如果当前ET时间在开盘前（09:30前），则使用昨天的数据
+            if now_et.hour < 16 or (now_et.hour == 16 and now_et.minute == 0):
+                # 市场未收盘或刚收盘，使用昨天作为最新交易日
+                expected_latest_date = (now_et.date() - timedelta(days=1))
+            else:
+                # 市场已收盘，今天的数据应该可用
+                expected_latest_date = now_et.date()
+            
+            # 考虑周末：如果是周六/周日，往前推到周五
+            while expected_latest_date.weekday() >= 5:  # 5=周六, 6=周日
+                expected_latest_date -= timedelta(days=1)
+            
+            today = pd.Timestamp.now().normalize().tz_localize(None)
+            one_year_ago = today - timedelta(days=365)
+            
+            # 检查缓存数据的完整性
+            need_full_refresh = False
+            
+            if cached_df is None or cached_df.empty:
+                # 无缓存，需要全量获取
+                need_full_refresh = True
+                logger.info(f"无缓存数据，需要全量获取: {symbol}, {yf_interval}")
+            else:
+                # 统一时区
+                if cached_df.index.tzinfo is not None:
+                    cached_df.index = cached_df.index.tz_localize(None)
+                
+                first_date = cached_df.index[0]
+                last_date = cached_df.index[-1]
+                
+                # 检查1: 缓存数据是否覆盖至少1年
+                if first_date > one_year_ago:
+                    logger.info(f"缓存数据不足1年（最早: {first_date}），需要全量刷新")
+                    need_full_refresh = True
+                # 检查2: 最新数据是否过旧（超过7天，兼容周末和假期）
+                elif last_date.date() < (today - timedelta(days=7)).date():
+                    logger.info(f"缓存数据过旧（最新: {last_date}），需要全量刷新")
+                    need_full_refresh = True
+            
+            if need_full_refresh:
+                # 全量获取：至少获取2年数据以确保覆盖1年以上
+                logger.info(f"从 yfinance 获取全量数据: {symbol}, 2y, {yf_interval}")
+                ticker = yf.Ticker(symbol)
+                df = ticker.history(period='2y', interval=yf_interval)
+                
+                if df.empty:
+                    logger.warning(f"无法获取历史数据: {symbol}")
+                    return None, {'code': 200, 'message': f'证券 {symbol} 不存在或没有数据'}
+                
+                # 统一时区
+                if df.index.tzinfo is not None:
+                    df.index = df.index.tz_localize(None)
+                
+                # 保存到缓存
+                self._save_kline_to_cache(symbol, yf_interval, df)
+                
+                logger.info(f"全量数据已缓存: {symbol}, {yf_interval}, {len(df)}条, 时间范围: {df.index[0]} - {df.index[-1]}")
+                return self._format_historical_data(df), None
+            
+            # 增量更新：获取最新数据并合并
+            last_cached_date = cached_df.index[-1]
+            logger.info(f"使用缓存数据并增量更新: {symbol}, {yf_interval}, 最新: {last_cached_date.date()}")
+            
+            # 检查缓存数据是否已是最新
+            if last_cached_date.date() >= expected_latest_date:
+                logger.info(f"缓存已是最新数据: {symbol}, 缓存日期={last_cached_date.date()}, 预期最新={expected_latest_date}")
+                return self._format_historical_data(cached_df), None
+            
+            try:
+                ticker = yf.Ticker(symbol)
+                # 获取最近10天的数据以确保覆盖周末、节假日和时区差异
+                new_data = ticker.history(period='10d', interval=yf_interval)
+                
+                if not new_data.empty:
+                    # 统一时区
+                    if new_data.index.tzinfo is not None:
+                        new_data.index = new_data.index.tz_localize(None)
+                    
+                    # 检查是否有新数据
+                    new_data_filtered = new_data[new_data.index > last_cached_date]
+                    
+                    if not new_data_filtered.empty:
+                        # 有新数据，合并
+                        combined_df = pd.concat([cached_df, new_data])
+                        combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
+                        combined_df = combined_df.sort_index()
+                        
+                        # 保存新数据到缓存
+                        self._save_kline_to_cache(symbol, yf_interval, new_data)
+                        
+                        logger.info(f"增量更新完成: {symbol}, 新增{len(new_data_filtered)}条, 总计{len(combined_df)}条, 最新: {combined_df.index[-1].date()}")
+                        return self._format_historical_data(combined_df), None
+                    else:
+                        # 无新数据，可能是非交易日或时区原因
+                        logger.info(f"无新数据，返回缓存数据: {symbol}, 缓存最新日期: {last_cached_date.date()}")
+                        return self._format_historical_data(cached_df), None
+                else:
+                    logger.info(f"获取最新数据为空，返回缓存数据")
+                    return self._format_historical_data(cached_df), None
+                    
+            except Exception as e:
+                logger.warning(f"增量更新失败: {e}，返回缓存数据")
+            
+            return self._format_historical_data(cached_df), None
+            
+        except Exception as e:
+            logger.error(f"获取历史数据失败: {symbol}, 错误: {e}")
+            return None, {'code': 500, 'message': str(e)}
+    
+    def _format_historical_data(self, df: pd.DataFrame):
+        """
+        格式化历史数据
+        """
+        result = []
+        for date, row in df.iterrows():
+            date_str = date.strftime('%Y%m%d')
+            if pd.notna(date.hour):  # 如果有时间
+                date_str = date.strftime('%Y%m%d %H:%M:%S')
+            
+            result.append({
+                'date': date_str,
+                'open': float(row['Open']),
+                'high': float(row['High']),
+                'low': float(row['Low']),
+                'close': float(row['Close']),
+                'volume': int(row['Volume']),
+                'average': float((row['High'] + row['Low'] + row['Close']) / 3),
+                'barCount': 1
+            })
+        
+        return result
+    
     def calculate_technical_indicators(self, symbol: str, duration: str = '1 M', bar_size: str = '1 day'):
         """
         计算技术指标（基于历史数据）
@@ -1131,8 +625,6 @@ class IBGateway(EWrapper, EClient):
         if not hist_data or len(hist_data) < 20:
             logger.warning(f"数据不足，无法计算技术指标: {symbol}")
             return None, None
-            
-        import numpy as np
         
         # 提取收盘价
         closes = np.array([bar['close'] for bar in hist_data])
@@ -1174,7 +666,7 @@ class IBGateway(EWrapper, EClient):
         volatility_data = calculate_volatility(closes)
         result.update(volatility_data)
             
-        # 8. 支撑位和压力位
+        # 8. 支持位和压力位
         support_resistance = calculate_support_resistance(closes, highs, lows)
         result.update(support_resistance)
         
@@ -1208,7 +700,7 @@ class IBGateway(EWrapper, EClient):
         fibonacci_levels = calculate_fibonacci_retracement(highs, lows)
         result.update(fibonacci_levels)
 
-        # 15. 缠论分析（已优化63日数据）
+        # 15. 缠论分析（已优入63日数据）
         chanlun_data = calculate_chanlun_analysis(closes, highs, lows, volumes)
         result.update(chanlun_data)
         
@@ -1252,17 +744,7 @@ class IBGateway(EWrapper, EClient):
             ichimoku_data = calculate_ichimoku(closes, highs, lows)
             result.update(ichimoku_data)
 
-        # 20. IBKR基本面数据
-        try:
-            fundamental_data = self.get_fundamental_data(symbol, 'ReportSnapshot')
-            if fundamental_data:
-                result['fundamental_data'] = fundamental_data
-                logger.info(f"基本面数据已添加到技术指标: {symbol}")
-            # 如果没有基本面数据（如ETF等），静默跳过，不记录警告
-        except Exception as e:
-            # 只有非预期的异常才记录警告
-            logger.warning(f"获取基本面数据异常: {symbol}, 错误: {e}")
-            # 基本面数据获取失败不影响技术指标返回
+        # yfinance不提供基本面数据，这部分移除
             
         return result, None  # 返回结果和错误信息（无错误为None）
         
@@ -1891,429 +1373,27 @@ def health():
     """
     return jsonify({
         'status': 'ok',
-        'connected': gateway.connected if gateway else False,
+        'gateway': 'yfinance',
         'timestamp': datetime.now().isoformat()
     })
 
 
-@app.route('/api/connect', methods=['POST'])
-def connect():
-    """
-    连接到IB TWS
-    请求参数:
-    {
-        "host": "127.0.0.1",
-        "port": 7496,
-        "client_id": 1
-    }
-    """
-    global gateway
-    
-    data = request.get_json() or {}
-    host = data.get('host', '127.0.0.1')
-    port = data.get('port', 7496)
-    client_id = data.get('client_id', 1)
-    
-    if gateway and gateway.connected:
-        return jsonify({
-            'success': True,
-            'message': '已经连接',
-            'accounts': gateway.accounts
-        })
-    
-    gateway = IBGateway()
-    success = gateway.connect_gateway(host, port, client_id)
-    
-    if success:
-        # 等待数据加载
-        time.sleep(2)
-        return jsonify({
-            'success': True,
-            'message': '连接成功',
-            'accounts': gateway.accounts
-        })
-    else:
-        return jsonify({
-            'success': False,
-            'message': '连接失败'
-        }), 500
+# 已移除交易相关API端点(connect, disconnect, account, positions, orders, executions, order, quote)
 
 
-@app.route('/api/disconnect', methods=['POST'])
-def disconnect():
-    """
-    断开连接
-    """
-    global gateway
-    
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接'
-        }), 400
-    
-    gateway.disconnect_gateway()
-    return jsonify({
-        'success': True,
-        'message': '已断开连接'
-    })
+# 已移除 /api/history/<symbol> 接口
+# 历史K线数据仅在内部使用，不对外提供独立API
 
 
-@app.route('/api/account', methods=['GET'])
-def get_account():
-    """
-    获取账户信息
-    """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    summary = gateway.get_account_summary()
-    return jsonify({
-        'success': True,
-        'data': summary
-    })
+# 已移除 /api/info/<symbol> 接口
+# 股票信息仅在内部使用，不对外提供独立API
 
 
-@app.route('/api/positions', methods=['GET'])
-def get_positions():
-    """
-    获取持仓信息
-    """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    positions = gateway.get_positions()
-    return jsonify({
-        'success': True,
-        'data': list(positions.values())
-    })
+# 已移除 /api/fundamental/<symbol> 接口
+# 基本面数据仅在内部使用（AI分析时自动获取），不对外提供独立API
 
 
-@app.route('/api/orders', methods=['GET'])
-def get_orders():
-    """
-    获取订单列表
-    """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    orders = gateway.get_orders()
-    return jsonify({
-        'success': True,
-        'data': list(orders.values())
-    })
-
-
-@app.route('/api/executions', methods=['GET'])
-def get_executions():
-    """
-    获取成交记录
-    """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    executions = gateway.get_executions()
-    return jsonify({
-        'success': True,
-        'data': list(executions.values())
-    })
-
-
-@app.route('/api/order', methods=['POST'])
-def submit_order():
-    """
-    提交订单
-    请求参数:
-    {
-        "symbol": "AAPL",
-        "action": "BUY",
-        "quantity": 100,
-        "order_type": "MKT",
-        "limit_price": 150.0,
-        "exchange": "SMART",
-        "currency": "USD"
-    }
-    """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    data = request.get_json()
-    
-    # 验证必需参数
-    required_fields = ['symbol', 'action', 'quantity']
-    for field in required_fields:
-        if field not in data:
-            return jsonify({
-                'success': False,
-                'message': f'缺少必需参数: {field}'
-            }), 400
-    
-    try:
-        # 创建合约
-        contract = gateway.create_stock_contract(
-            symbol=data['symbol'],
-            exchange=data.get('exchange', 'SMART'),
-            currency=data.get('currency', 'USD')
-        )
-        
-        # 创建订单
-        order = gateway.create_order(
-            action=data['action'],
-            quantity=data['quantity'],
-            order_type=data.get('order_type', 'MKT'),
-            limit_price=data.get('limit_price', 0),
-            aux_price=data.get('aux_price', 0)
-        )
-        
-        # 提交订单
-        order_id = gateway.submit_order(contract, order)
-        
-        if order_id:
-            return jsonify({
-                'success': True,
-                'message': '订单已提交',
-                'order_id': order_id
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': '订单提交失败'
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"订单异常: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'订单提交异常: {str(e)}'
-        }), 500
-
-
-@app.route('/api/order/<int:order_id>', methods=['DELETE'])
-def cancel_order(order_id):
-    """
-    撤销订单
-    """
-    logger.info(f"收到撤单请求: 订单 #{order_id}")
-    
-    if not gateway or not gateway.connected:
-        logger.warning("网关未连接")
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    # 检查订单状态
-    orders = gateway.get_orders()
-    logger.info(f"当前订单列表: {list(orders.keys())}")
-    
-    if order_id in orders:
-        status = orders[order_id].get('status', '')
-        logger.info(f"订单 #{order_id} 状态: {status}")
-        
-        if status in ['Cancelled', 'PendingCancel']:
-            logger.warning(f"订单 #{order_id} 已在撤销中或已撤销")
-            return jsonify({
-                'success': False,
-                'message': f'订单已在撤销中或已撤销 (状态: {status})'
-            }), 400
-        elif status == 'Filled':
-            logger.warning(f"订单 #{order_id} 已成交")
-            return jsonify({
-                'success': False,
-                'message': '订单已成交，无法撤销'
-            }), 400
-    else:
-        logger.warning(f"订单 #{order_id} 不在订单列表中")
-    
-    success = gateway.cancel_order(order_id)
-    
-    if success:
-        logger.info(f"订单 #{order_id} 撤销请求成功")
-        return jsonify({
-            'success': True,
-            'message': f'订单 {order_id} 撤销请求已发送'
-        })
-    else:
-        logger.error(f"订单 #{order_id} 撤销请求失败")
-        return jsonify({
-            'success': False,
-            'message': '撤销订单失败'
-        }), 500
-
-
-@app.route('/api/order/<int:order_id>', methods=['GET'])
-def get_order_detail(order_id):
-    """
-    获取订单详情
-    """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    orders = gateway.get_orders()
-    
-    if order_id in orders:
-        return jsonify({
-            'success': True,
-            'data': orders[order_id]
-        })
-    else:
-        return jsonify({
-            'success': False,
-            'message': '订单不存在'
-        }), 404
-
-
-@app.route('/api/quote/<symbol>', methods=['GET'])
-def get_quote(symbol):
-    """
-    获取实时报价
-    """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    exchange = request.args.get('exchange', 'SMART')
-    currency = request.args.get('currency', 'USD')
-    
-    logger.info(f"查询报价: {symbol}")
-    data = gateway.get_market_data(symbol.upper(), exchange, currency)
-    
-    if data and len(data) > 1:  # 至少有symbol和一个价格字段
-        return jsonify({
-            'success': True,
-            'data': data
-        })
-    else:
-        return jsonify({
-            'success': False,
-            'message': '无法获取报价数据'
-        }), 404
-
-
-@app.route('/api/history/<symbol>', methods=['GET'])
-def get_history(symbol):
-    """
-    获取历史数据
-    查询参数:
-    - duration: 数据周期 (默认: '1 D')
-    - bar_size: K线周期 (默认: '5 mins')
-    - exchange: 交易所 (默认: 'SMART')
-    - currency: 货币 (默认: 'USD')
-    """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    duration = request.args.get('duration', '1 D')
-    bar_size = request.args.get('bar_size', '5 mins')
-    exchange = request.args.get('exchange', 'SMART')
-    currency = request.args.get('currency', 'USD')
-    
-    logger.info(f"查询历史数据: {symbol}, {duration}, {bar_size}")
-    data, error = gateway.get_historical_data(symbol.upper(), duration, bar_size, exchange, currency)
-    
-    # 如果有错误，返回错误信息
-    if error:
-        return jsonify({
-            'success': False,
-            'error_code': error['code'],
-            'message': error['message']
-        }), 400
-    
-    if data:
-        return jsonify({
-            'success': True,
-            'count': len(data),
-            'data': data
-        })
-    else:
-        return jsonify({
-            'success': False,
-            'message': '无法获取历史数据'
-        }), 404
-
-
-@app.route('/api/info/<symbol>', methods=['GET'])
-def get_stock_info(symbol):
-    """
-    获取股票详细信息
-    """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    exchange = request.args.get('exchange', 'SMART')
-    currency = request.args.get('currency', 'USD')
-    
-    logger.info(f"查询股票信息: {symbol}")
-    data = gateway.get_stock_info(symbol.upper(), exchange, currency)
-    
-    if data:
-        return jsonify({
-            'success': True,
-            'data': data
-        })
-    else:
-        return jsonify({
-            'success': False,
-            'message': '无法获取股票信息'
-        }), 404
-
-
-@app.route('/api/fundamental/<symbol>', methods=['GET'])
-def get_fundamental(symbol):
-    """
-    获取基本面数据
-    查询参数:
-    - report_type: 报告类型 (默认: ReportsFinSummary)
-    """
-    if not gateway or not gateway.connected:
-        return jsonify({
-            'success': False,
-            'message': '未连接到网关'
-        }), 400
-    
-    report_type = request.args.get('report_type', 'ReportsFinSummary')
-    
-    logger.info(f"查询基本面数据: {symbol}, {report_type}")
-    data = gateway.get_fundamental_data(symbol.upper(), report_type)
-    
-    if data:
-        return jsonify({
-            'success': True,
-            'data': data
-        })
-    else:
-        return jsonify({
-            'success': False,
-            'message': '无法获取基本面数据'
-        }), 404
-
-
+# 以下是AI分析相关的辅助函数
 def _check_ollama_available():
     """
     检查 Ollama 是否可用
@@ -2715,10 +1795,10 @@ def analyze_stock(symbol):
     - bar_size: K线周期 (默认: '1 day')
     - model: AI模型名称 (默认: 'deepseek-v3.1:671b-cloud')，仅在Ollama可用时使用
     """
-    if not gateway or not gateway.connected:
+    if not gateway:
         return jsonify({
             'success': False,
-            'message': '未连接到网关'
+            'message': '网关未初始化'
         }), 400
     
     duration = request.args.get('duration', '3 M')
@@ -2859,19 +1939,8 @@ def analyze_stock(symbol):
     return jsonify(result)
 
 
-@app.route('/api/ai-analyze/<symbol>', methods=['GET'])
-def ai_analyze_stock(symbol):
-    """
-    AI技术分析 - 兼容接口，重定向到 /api/analyze
-    查询参数:
-    - duration: 数据周期 (默认: '3 M')
-    - bar_size: K线周期 (默认: '1 day')
-    - model: Ollama模型 (默认: 'deepseek-v3.1:671b-cloud')
-    
-    注意: 此接口已合并到 /api/analyze，后端会自动检测 Ollama 并执行AI分析
-    """
-    # 重定向到统一的 analyze 接口
-    return analyze_stock(symbol)
+# 已移除 /api/ai-analyze/<symbol> 接口
+# AI分析已整合到 /api/analyze 中，会自动检测Ollama并执行AI分析
 
 
 @app.route('/api/refresh-analyze/<symbol>', methods=['POST'])
@@ -2885,10 +1954,10 @@ def refresh_analyze_stock(symbol):
     - bar_size: K线周期 (默认: '1 day')
     - model: AI模型名称 (默认: 'deepseek-v3.1:671b-cloud')，仅在Ollama可用时使用
     """
-    if not gateway or not gateway.connected:
+    if not gateway:
         return jsonify({
             'success': False,
-            'message': '未连接到网关'
+            'message': '网关未初始化'
         }), 400
     
     duration = request.args.get('duration', '3 M')
@@ -3635,28 +2704,18 @@ def index():
     API首页
     """
     return jsonify({
-        'service': 'IB Trading Gateway API',
-        'version': '1.0.0',
+        'service': 'YFinance Stock Analysis API',
+        'version': '2.0.0',
+        'data_source': 'Yahoo Finance',
+        'description': '基于yfinance的股票数据分析服务，提供技术指标分析、K线数据查询等功能',
         'endpoints': {
-            'health': 'GET /api/health',
-            'connect': 'POST /api/connect',
-            'disconnect': 'POST /api/disconnect',
-            'account': 'GET /api/account',
-            'positions': 'GET /api/positions',
-            'orders': 'GET /api/orders',
-            'executions': 'GET /api/executions',
-            'submit_order': 'POST /api/order',
-            'cancel_order': 'DELETE /api/order/<order_id>',
-            'order_detail': 'GET /api/order/<order_id>',
-            'quote': 'GET /api/quote/<symbol>',
-            'history': 'GET /api/history/<symbol>',
-            'stock_info': 'GET /api/info/<symbol>',
-            'fundamental': 'GET /api/fundamental/<symbol>',
-            'analyze': 'GET /api/analyze/<symbol>',
-            'ai_analyze': 'GET /api/ai-analyze/<symbol>',
-            'hot_stocks': 'GET /api/hot-stocks?limit=20',
-            'indicator_info': 'GET /api/indicator-info?indicator=rsi'
-        }
+            'health': 'GET /api/health - 健康检查',
+            'analyze': 'GET /api/analyze/<symbol>?duration=1Y&bar_size=1day - 技术分析（自动包含AI分析）',
+            'refresh_analyze': 'POST /api/refresh-analyze/<symbol>?duration=1Y&bar_size=1day - 强制刷新分析',
+            'hot_stocks': 'GET /api/hot-stocks?limit=20 - 热门股票列表',
+            'indicator_info': 'GET /api/indicator-info?indicator=rsi - 指标说明'
+        },
+        'note': '历史K线、股票信息、基本面数据已整合到analyze接口中，不再提供独立API'
     })
 
 
@@ -3666,45 +2725,19 @@ def main():
     """
     global gateway
     import os
-    import time as time_module
     
     # 初始化数据库
     init_database()
     
+    # 初始化yfinance网关
+    logger.info("初始化YFinance数据网关...")
+    gateway = YFinanceGateway()
+    logger.info("✅ YFinance网关初始化成功")
+    
     port = 8080
-    logger.info(f"API服务启动 http://0.0.0.0:{port}")
-    
-    # 自动连接到IB TWS（带重试）
-    logger.info("自动连接到IB TWS...")
-    
-    # 从环境变量读取连接配置，默认本地连接
-    ib_host = os.getenv('IB_GATEWAY_HOST', '127.0.0.1')
-    ib_port = int(os.getenv('IB_GATEWAY_PORT', '7496'))
-    
-    logger.info(f"尝试连接 IB Gateway: {ib_host}:{ib_port}")
-    
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        logger.info(f"尝试连接 ({attempt}/{max_retries})...")
-        gateway = IBGateway()
-        
-        if gateway.connect_gateway(host=ib_host, port=ib_port, client_id=attempt):
-            # 等待数据加载
-            time_module.sleep(2)
-            if gateway.accounts:
-                logger.info(f"✅ 已连接账户: {', '.join(gateway.accounts)}")
-            break
-        else:
-            logger.warning(f"第 {attempt} 次连接失败")
-            if attempt < max_retries:
-                logger.info("等待5秒后重试...")
-                time_module.sleep(5)
-            else:
-                logger.warning("⚠️  自动连接失败，可通过API手动连接")
-                gateway = None
+    logger.info(f"🚀 API服务启动在 http://0.0.0.0:{port}")
     
     # 启动Flask服务
-    logger.info(f"🚀 Flask服务启动在 http://0.0.0.0:{port}")
     app.run(
         host='0.0.0.0',
         port=port,
