@@ -45,6 +45,7 @@ import {
   analyze,
   getHotStocks,
   getIndicatorInfo,
+  refreshAnalyze,
 } from '../services/api';
 import type {
   Position,
@@ -252,6 +253,82 @@ const MainPage: React.FC = () => {
       }
     } catch (error: any) {
       message.error(error.message || '分析失败');
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
+  /**
+   * 刷新分析 - 强制重新获取数据，不使用缓存
+   */
+  const handleRefreshAnalyze = async (): Promise<void> => {
+    console.log('handleRefreshAnalyze called');
+
+    // 检查是否有当前分析的股票代码
+    if (!currentSymbol) {
+      message.warning('请先进行一次分析');
+      return;
+    }
+
+    // 从表单获取当前参数
+    const formValues = analyzeForm.getFieldsValue();
+    const duration = formValues.duration || '3 M';
+    const barSize = formValues.barSize || '1 day';
+    const model = formValues.model || 'deepseek-v3.1:671b-cloud';
+
+    setAnalysisLoading(true);
+    setAnalysisResult(null);
+    setAiAnalysisResult(null);
+
+    try {
+      console.log('Starting refresh analysis:', { currentSymbol, duration, barSize, model });
+
+      // 调用刷新接口，强制重新获取数据
+      const result = await refreshAnalyze(currentSymbol, duration, barSize, model);
+
+      console.log('Refresh analysis result:', result);
+
+      // 处理分析结果
+      if (result && result.success) {
+        // 打印获取到的数据到console
+        console.log('=== 刷新技术分析数据 ===');
+        console.log('完整结果:', result);
+        console.log('技术指标:', result.indicators);
+        console.log('交易信号:', result.signals);
+        console.log('K线数据:', result.candles);
+        console.log('K线数据条数:', result.candles?.length || 0);
+        if (result.ai_analysis) {
+          console.log('AI分析:', result.ai_analysis);
+        }
+        console.log('==================');
+
+        // 设置技术分析结果（包含 indicators 和 signals）
+        setAnalysisResult(result);
+
+        // 如果有AI分析结果，设置AI分析结果
+        if (result.ai_analysis) {
+          setAiAnalysisResult(result);
+          setAiAnalysisDrawerVisible(true);
+        }
+
+        message.success('数据已刷新');
+      } else {
+        // 处理错误
+        let errorMsg = result?.message || '刷新失败';
+
+        // 如果有错误代码，显示更详细的错误信息
+        if (result?.error_code) {
+          if (result.error_code === 200) {
+            errorMsg = `股票代码 "${currentSymbol}" 不存在或无权限查询，请检查代码是否正确`;
+          } else {
+            errorMsg = `错误[${result.error_code}]: ${result.message}`;
+          }
+        }
+
+        message.error(errorMsg, 5); // 显示5秒
+      }
+    } catch (error: any) {
+      message.error(error.message || '刷新失败');
     } finally {
       setAnalysisLoading(false);
     }
@@ -692,10 +769,22 @@ const MainPage: React.FC = () => {
                   <div>
                     <Descriptions
                       title={
-                        <span>
-                          <BarChartOutlined style={{ marginRight: 8 }} />
-                          价格信息
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span>
+                            <BarChartOutlined style={{ marginRight: 8 }} />
+                            价格信息
+                          </span>
+                          <Button
+                            type="default"
+                            size="small"
+                            icon={<ReloadOutlined />}
+                            onClick={handleRefreshAnalyze}
+                            loading={analysisLoading}
+                            style={{ marginLeft: 16 }}
+                          >
+                            刷新数据
+                          </Button>
+                        </div>
                       }
                       bordered
                       column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}

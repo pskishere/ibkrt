@@ -87,11 +87,11 @@ export const buy = async (
       quantity: quantity,
       order_type: limitPrice ? 'LMT' : 'MKT',
     };
-    
+
     if (limitPrice) {
       orderData.limit_price = limitPrice;
     }
-    
+
     const response = await api.post<ApiResponse>('/api/order', orderData);
     return handleResponse(response);
   } catch (error) {
@@ -115,11 +115,11 @@ export const sell = async (
       quantity: quantity,
       order_type: limitPrice ? 'LMT' : 'MKT',
     };
-    
+
     if (limitPrice) {
       orderData.limit_price = limitPrice;
     }
-    
+
     const response = await api.post<ApiResponse>('/api/order', orderData);
     return handleResponse(response);
   } catch (error) {
@@ -160,7 +160,7 @@ export const analyze = async (
       bar_size: barSize,
       model: model, // 传递模型参数，后端会在Ollama可用时使用
     });
-    
+
     const response = await api.get<AnalysisResult>(
       `/api/analyze/${symbol.toUpperCase()}?${params.toString()}`,
       {
@@ -200,7 +200,7 @@ export const getHotStocks = async (limit: number = 20): Promise<ApiResponse<HotS
     const params = new URLSearchParams({
       limit: limit.toString(),
     });
-    
+
     const response = await api.get<ApiResponse<HotStock[]>>(
       `/api/hot-stocks?${params.toString()}`
     );
@@ -221,13 +221,47 @@ export const getIndicatorInfo = async (indicator: string = ''): Promise<Indicato
     if (indicator) {
       params.append('indicator', indicator);
     }
-    
-    const url = indicator 
+
+    const url = indicator
       ? `/api/indicator-info?${params.toString()}`
       : '/api/indicator-info';
-    
+
     const response = await api.get<IndicatorInfoResponse>(url);
     return handleResponse(response);
+  } catch (error) {
+    handleError(error);
+    throw error;
+  }
+};
+
+/**
+ * 刷新分析 - 强制重新获取数据，不使用缓存
+ * @param symbol - 股票代码
+ * @param duration - 数据周期，默认 '3 M'
+ * @param barSize - K线周期，默认 '1 day'
+ * @param model - AI模型名称，默认 'deepseek-v3.1:671b-cloud'（仅在Ollama可用时使用）
+ */
+export const refreshAnalyze = async (
+  symbol: string,
+  duration: string = '3 M',
+  barSize: string = '1 day',
+  model: string = 'deepseek-v3.1:671b-cloud'
+): Promise<AnalysisResult> => {
+  try {
+    const params = new URLSearchParams({
+      duration: duration,
+      bar_size: barSize,
+      model: model,
+    });
+
+    const response = await api.post<AnalysisResult>(
+      `/api/refresh-analyze/${symbol.toUpperCase()}?${params.toString()}`,
+      {},
+      {
+        timeout: 60000, // 刷新可能需要更长时间
+      }
+    );
+    return handleResponse<AnalysisResult>(response) as AnalysisResult;
   } catch (error) {
     handleError(error);
     throw error;

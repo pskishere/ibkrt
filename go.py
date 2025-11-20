@@ -2874,6 +2874,133 @@ def ai_analyze_stock(symbol):
     return analyze_stock(symbol)
 
 
+@app.route('/api/refresh-analyze/<symbol>', methods=['POST'])
+def refresh_analyze_stock(symbol):
+    """
+    刷新技术分析 - 强制重新获取数据并分析，不使用缓存
+    自动检测 Ollama 是否可用，如果可用则自动执行AI分析
+    
+    查询参数:
+    - duration: 数据周期 (默认: '3 M')
+    - bar_size: K线周期 (默认: '1 day')
+    - model: AI模型名称 (默认: 'deepseek-v3.1:671b-cloud')，仅在Ollama可用时使用
+    """
+    if not gateway or not gateway.connected:
+        return jsonify({
+            'success': False,
+            'message': '未连接到网关'
+        }), 400
+    
+    duration = request.args.get('duration', '3 M')
+    bar_size = request.args.get('bar_size', '1 day')
+    model = request.args.get('model', 'deepseek-v3.1:671b-cloud')
+    
+    symbol_upper = symbol.upper()
+    
+    logger.info(f"刷新技术分析（强制重新获取）: {symbol_upper}, {duration}, {bar_size}")
+    
+    # 获取股票信息并保存到数据库
+    try:
+        stock_info = gateway.get_stock_info(symbol_upper)
+        if stock_info:
+            stock_name = None
+            # 处理返回的数据结构
+            if isinstance(stock_info, dict):
+                stock_name = stock_info.get('longName', '')
+            elif isinstance(stock_info, list) and len(stock_info) > 0:
+                # 如果返回的是列表，取第一个
+                stock_data = stock_info[0]
+                if isinstance(stock_data, dict):
+                    stock_name = stock_data.get('longName', '')
+            
+            # 如果有有效的股票名称，保存到数据库
+            if stock_name and stock_name.strip() and stock_name != symbol_upper:
+                save_stock_info(symbol_upper, stock_name.strip())
+    except Exception as e:
+        logger.warning(f"获取股票信息失败: {e}")
+    
+    # 获取历史K线数据
+    hist_data, hist_error = gateway.get_historical_data(symbol_upper, duration, bar_size)
+    
+    # 计算技术指标
+    indicators, ind_error = gateway.calculate_technical_indicators(symbol_upper, duration, bar_size)
+    
+    # 检查是否有错误（如证券不存在）
+    if ind_error:
+        return jsonify({
+            'success': False,
+            'error_code': ind_error['code'],
+            'message': ind_error['message']
+        }), 400
+    
+    if not indicators:
+        return jsonify({
+            'success': False,
+            'message': '数据不足，无法计算技术指标'
+        }), 404
+    
+    # 生成买卖信号
+    signals = gateway.generate_signals(indicators)
+    
+    # 格式化K线数据
+    formatted_candles = []
+    if hist_data:
+        for bar in hist_data:
+            date_str = bar.get('date', '')
+            try:
+                # 解析日期格式 "20250818" -> "2025-08-18"
+                if len(date_str) == 8:
+                    dt = datetime.strptime(date_str, '%Y%m%d')
+                    time_str = dt.strftime('%Y-%m-%d')
+                elif ' ' in date_str:
+                    # 处理 "20250818 16:00:00" 格式
+                    dt = datetime.strptime(date_str, '%Y%m%d %H:%M:%S')
+                    time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    time_str = date_str
+            except Exception as e:
+                logger.warning(f"日期解析失败: {date_str}, 错误: {e}")
+                time_str = date_str
+            
+            formatted_candles.append({
+                'time': time_str,
+                'open': float(bar.get('open', 0)),
+                'high': float(bar.get('high', 0)),
+                'low': float(bar.get('low', 0)),
+                'close': float(bar.get('close', 0)),
+                'volume': int(bar.get('volume', 0)),
+            })
+    
+    # 构建返回数据
+    result = {
+        'success': True,
+        'indicators': indicators,
+        'signals': signals,
+        'candles': formatted_candles
+    }
+    
+    # 自动检测 Ollama 是否可用，如果可用则执行AI分析
+    if _check_ollama_available():
+        logger.info(f"检测到 Ollama 可用，开始AI分析...")
+        try:
+            ai_analysis = _perform_ai_analysis(symbol_upper, indicators, signals, duration, model)
+            result['ai_analysis'] = ai_analysis
+            result['model'] = model
+            result['ai_available'] = True
+        except Exception as e:
+            logger.warning(f"AI分析执行失败: {e}")
+            result['ai_available'] = False
+            result['ai_error'] = str(e)
+    else:
+        logger.info("Ollama 不可用，跳过AI分析")
+        result['ai_available'] = False
+    
+    # 保存到缓存（更新缓存）
+    save_analysis_cache(symbol_upper, duration, bar_size, result)
+    
+    return jsonify(result)
+
+
 @app.route('/api/hot-stocks', methods=['GET'])
 def get_hot_stocks():
     """
