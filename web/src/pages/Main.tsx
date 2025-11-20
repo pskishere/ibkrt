@@ -1700,12 +1700,12 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('员工数', 'fundamental'),
                                     span: 1,
-                                    children: `${fd.Employees}人`,
+                                    children: `${String(fd.Employees)}人`,
                                   });
                                 }
 
                                 if (fd.SharesOutstanding) {
-                                  const shares = parseFloat(fd.SharesOutstanding);
+                                  const shares = parseFloat(String(fd.SharesOutstanding));
                                   let sharesText = '';
                                   if (shares >= 1e9) {
                                     sharesText = `${(shares / 1e9).toFixed(2)}B`;
@@ -1723,7 +1723,7 @@ const MainPage: React.FC = () => {
 
                                 // 市值与价格
                                 if (fd.MarketCap) {
-                                  const mcap = parseFloat(fd.MarketCap);
+                                  const mcap = parseFloat(String(fd.MarketCap));
                                   let mcapText = '';
                                   if (mcap >= 1e12) {
                                     mcapText = `$${(mcap / 1e12).toFixed(2)}T`;
@@ -1745,7 +1745,7 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('当前价', 'fundamental'),
                                     span: 1,
-                                    children: `$${formatValue(fd.Price, 2)}`,
+                                    children: `$${formatValue(parseFloat(String(fd.Price || 0)), 2)}`,
                                   });
                                 }
 
@@ -1753,13 +1753,13 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('52周区间', 'fundamental'),
                                     span: 2,
-                                    children: `$${formatValue(fd['52WeekLow'], 2)} - $${formatValue(fd['52WeekHigh'], 2)}`,
+                                    children: `$${formatValue(parseFloat(String(fd['52WeekLow'] || 0)), 2)} - $${formatValue(parseFloat(String(fd['52WeekHigh'] || 0)), 2)}`,
                                   });
                                 }
 
                                 // 财务指标
                                 if (fd.RevenueTTM) {
-                                  const revenue = parseFloat(fd.RevenueTTM);
+                                  const revenue = parseFloat(String(fd.RevenueTTM));
                                   let revenueText = '';
                                   if (revenue >= 1e9) {
                                     revenueText = `$${(revenue / 1e9).toFixed(2)}B`;
@@ -1776,7 +1776,7 @@ const MainPage: React.FC = () => {
                                 }
 
                                 if (fd.NetIncomeTTM) {
-                                  const income = parseFloat(fd.NetIncomeTTM);
+                                  const income = parseFloat(String(fd.NetIncomeTTM));
                                   let incomeText = '';
                                   if (income >= 1e9) {
                                     incomeText = `$${(income / 1e9).toFixed(2)}B`;
@@ -1793,7 +1793,7 @@ const MainPage: React.FC = () => {
                                 }
 
                                 if (fd.EBITDATTM) {
-                                  const ebitda = parseFloat(fd.EBITDATTM);
+                                  const ebitda = parseFloat(String(fd.EBITDATTM));
                                   let ebitdaText = '';
                                   if (ebitda >= 1e9) {
                                     ebitdaText = `$${(ebitda / 1e9).toFixed(2)}B`;
@@ -1813,7 +1813,7 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('利润率', 'profit_margin'),
                                     span: 1,
-                                    children: `${formatValue(parseFloat(fd.ProfitMargin) * 100, 2)}%`,
+                                    children: `${formatValue(parseFloat(String(fd.ProfitMargin || 0)) * 100, 2)}%`,
                                   });
                                 }
 
@@ -1821,7 +1821,7 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('毛利率', 'profit_margin'),
                                     span: 1,
-                                    children: `${formatValue(parseFloat(fd.GrossMargin) * 100, 2)}%`,
+                                    children: `${formatValue(parseFloat(String(fd.GrossMargin || 0)) * 100, 2)}%`,
                                   });
                                 }
 
@@ -1830,7 +1830,7 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('每股收益(EPS)', 'eps'),
                                     span: 1,
-                                    children: `$${formatValue(fd.EPS, 2)}`,
+                                    children: `$${formatValue(parseFloat(String(fd.EPS || 0)), 2)}`,
                                   });
                                 }
 
@@ -1838,7 +1838,7 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('每股净资产', 'fundamental'),
                                     span: 1,
-                                    children: `$${formatValue(fd.BookValuePerShare, 2)}`,
+                                    children: `$${formatValue(parseFloat(String(fd.BookValuePerShare || 0)), 2)}`,
                                   });
                                 }
 
@@ -1846,7 +1846,7 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('每股现金', 'fundamental'),
                                     span: 1,
-                                    children: `$${formatValue(fd.CashPerShare, 2)}`,
+                                    children: `$${formatValue(parseFloat(String(fd.CashPerShare || 0)), 2)}`,
                                   });
                                 }
 
@@ -1854,19 +1854,19 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('每股股息', 'fundamental'),
                                     span: 1,
-                                    children: `$${formatValue(fd.DividendPerShare, 3)}`,
+                                    children: `$${formatValue(parseFloat(String(fd.DividendPerShare || 0)), 3)}`,
                                   });
                                 }
 
                                 // 估值指标
                                 if (fd.PE) {
-                                  const pe = parseFloat(fd.PE);
+                                  const pe = parseFloat(String(fd.PE));
                                   items.push({
                                     label: createIndicatorLabel('市盈率(PE)', 'pe'),
                                     span: 1,
                                     children: (
                                       <Space>
-                                        <span>{formatValue(pe, 2)}</span>
+                                        <span>{formatValue(parseFloat(String(pe)), 2)}</span>
                                         {pe < 15 ? (
                                           <Tag color="success">低估</Tag>
                                         ) : pe > 25 ? (
@@ -1880,13 +1880,13 @@ const MainPage: React.FC = () => {
                                 }
 
                                 if (fd.PriceToBook) {
-                                  const pb = parseFloat(fd.PriceToBook);
+                                  const pb = parseFloat(String(fd.PriceToBook));
                                   items.push({
                                     label: createIndicatorLabel('市净率(PB)', 'pb'),
                                     span: 1,
                                     children: (
                                       <Space>
-                                        <span>{formatValue(pb, 2)}</span>
+                                        <span>{formatValue(parseFloat(String(pb)), 2)}</span>
                                         {pb < 1 ? (
                                           <Tag color="success">低估</Tag>
                                         ) : pb > 3 ? (
@@ -1900,13 +1900,13 @@ const MainPage: React.FC = () => {
                                 }
 
                                 if (fd.ROE) {
-                                  const roe = parseFloat(fd.ROE) * 100;
+                                  const roe = parseFloat(String(fd.ROE)) * 100;
                                   items.push({
                                     label: createIndicatorLabel('净资产收益率(ROE)', 'roe'),
                                     span: 1,
                                     children: (
                                       <Space>
-                                        <span>{formatValue(roe, 2)}%</span>
+                                        <span>{formatValue(parseFloat(String(roe)), 2)}%</span>
                                         {roe > 15 ? (
                                           <Tag color="success">优秀</Tag>
                                         ) : roe > 10 ? (
@@ -1921,15 +1921,15 @@ const MainPage: React.FC = () => {
 
                                 // 分析师预测
                                 if (fd.TargetPrice) {
-                                  const target = parseFloat(fd.TargetPrice);
-                                  const currentPrice = parseFloat(fd.Price || analysisResult.indicators.current_price || 0);
+                                  const target = parseFloat(String(fd.TargetPrice));
+                                  const currentPrice = parseFloat(String(fd.Price || analysisResult.indicators.current_price || 0));
                                   const upside = currentPrice > 0 ? ((target - currentPrice) / currentPrice * 100) : 0;
                                   items.push({
                                     label: createIndicatorLabel('目标价', 'target_price'),
                                     span: 1,
                                     children: (
                                       <Space>
-                                        <span>${formatValue(target, 2)}</span>
+                                        <span>${formatValue(parseFloat(String(target)), 2)}</span>
                                         {upside > 0 ? (
                                           <Tag color="success">+{formatValue(upside, 1)}%</Tag>
                                         ) : (
@@ -1961,7 +1961,7 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('预测EPS', 'eps'),
                                     span: 1,
-                                    children: `$${formatValue(fd.ProjectedEPS, 2)}`,
+                                    children: `$${formatValue(parseFloat(String(fd.ProjectedEPS || 0)), 2)}`,
                                   });
                                 }
 
@@ -1969,7 +1969,7 @@ const MainPage: React.FC = () => {
                                   items.push({
                                     label: createIndicatorLabel('预测增长率', 'fundamental'),
                                     span: 1,
-                                    children: `${formatValue(parseFloat(fd.ProjectedGrowthRate) * 100, 2)}%`,
+                                    children: `${formatValue(parseFloat(String(fd.ProjectedGrowthRate || 0)) * 100, 2)}%`,
                                   });
                                 }
 
@@ -1977,9 +1977,254 @@ const MainPage: React.FC = () => {
                               })()}
                             />
                           ),
-                        }]}
-                        style={{ marginTop: 24 }}
-                      />
+                        },
+                        // 详细财务报表
+                        ...(analysisResult.indicators.fundamental_data?.Financials ||
+                          analysisResult.indicators.fundamental_data?.QuarterlyFinancials ||
+                          analysisResult.indicators.fundamental_data?.BalanceSheet ||
+                          analysisResult.indicators.fundamental_data?.Cashflow ? [{
+                            key: 'financial-statements',
+                            label: (
+                              <span>
+                                <BarChartOutlined style={{ marginRight: 8 }} />
+                                详细财务报表
+                              </span>
+                            ),
+                            children: (
+                              <Tabs
+                                defaultActiveKey="annual-financials"
+                                items={[
+                                  // 年度财务报表
+                                  (analysisResult.indicators.fundamental_data?.Financials && 
+                                   Array.isArray(analysisResult.indicators.fundamental_data.Financials) &&
+                                   analysisResult.indicators.fundamental_data.Financials.length > 0) ? {
+                                    key: 'annual-financials',
+                                    label: '年度财务报表',
+                                    children: (
+                                      <Table
+                                        size="small"
+                                        bordered
+                                        dataSource={analysisResult.indicators.fundamental_data.Financials.map((record: any, index: number) => ({
+                                          key: index,
+                                          ...record,
+                                        }))}
+                                        columns={(() => {
+                                          if (!analysisResult.indicators.fundamental_data?.Financials || 
+                                              !Array.isArray(analysisResult.indicators.fundamental_data.Financials) ||
+                                              analysisResult.indicators.fundamental_data.Financials.length === 0) {
+                                            return [];
+                                          }
+                                          const firstRecord = analysisResult.indicators.fundamental_data.Financials[0];
+                                          const dateCol = firstRecord.index || firstRecord.Date ? {
+                                            title: '日期',
+                                            dataIndex: firstRecord.index ? 'index' : 'Date',
+                                            key: 'date',
+                                            width: 120,
+                                            fixed: 'left' as const,
+                                          } : null;
+                                          const otherCols = Object.keys(firstRecord)
+                                            .filter(key => key !== 'index' && key !== 'Date')
+                                            .map(key => ({
+                                              title: key,
+                                              dataIndex: key,
+                                              key: key,
+                                              render: (value: any) => {
+                                                if (value === null || value === undefined || value === '') return '-';
+                                                const num = parseFloat(value);
+                                                if (!isNaN(num)) {
+                                                  if (Math.abs(num) >= 1e9) {
+                                                    return `$${(num / 1e9).toFixed(2)}B`;
+                                                  } else if (Math.abs(num) >= 1e6) {
+                                                    return `$${(num / 1e6).toFixed(2)}M`;
+                                                  } else {
+                                                    return `$${num.toFixed(2)}`;
+                                                  }
+                                                }
+                                                return value;
+                                              },
+                                            }));
+                                          return dateCol ? [dateCol, ...otherCols] : otherCols;
+                                        })()}
+                                        scroll={{ x: 'max-content' }}
+                                        pagination={false}
+                                      />
+                                    ),
+                                  } : null,
+                                  // 季度财务报表
+                                  (analysisResult.indicators.fundamental_data?.QuarterlyFinancials && 
+                                   Array.isArray(analysisResult.indicators.fundamental_data.QuarterlyFinancials) &&
+                                   analysisResult.indicators.fundamental_data.QuarterlyFinancials.length > 0) ? {
+                                    key: 'quarterly-financials',
+                                    label: '季度财务报表',
+                                    children: (
+                                      <Table
+                                        size="small"
+                                        bordered
+                                        dataSource={analysisResult.indicators.fundamental_data.QuarterlyFinancials.map((record: any, index: number) => ({
+                                          key: index,
+                                          ...record,
+                                        }))}
+                                        columns={(() => {
+                                          if (!analysisResult.indicators.fundamental_data?.QuarterlyFinancials || 
+                                              !Array.isArray(analysisResult.indicators.fundamental_data.QuarterlyFinancials) ||
+                                              analysisResult.indicators.fundamental_data.QuarterlyFinancials.length === 0) {
+                                            return [];
+                                          }
+                                          const firstRecord = analysisResult.indicators.fundamental_data.QuarterlyFinancials[0];
+                                          const dateCol = firstRecord.index || firstRecord.Date ? {
+                                            title: '日期',
+                                            dataIndex: firstRecord.index ? 'index' : 'Date',
+                                            key: 'date',
+                                            width: 120,
+                                            fixed: 'left' as const,
+                                          } : null;
+                                          const otherCols = Object.keys(firstRecord)
+                                            .filter(key => key !== 'index' && key !== 'Date')
+                                            .map(key => ({
+                                              title: key,
+                                              dataIndex: key,
+                                              key: key,
+                                              render: (value: any) => {
+                                                if (value === null || value === undefined || value === '') return '-';
+                                                const num = parseFloat(value);
+                                                if (!isNaN(num)) {
+                                                  if (Math.abs(num) >= 1e9) {
+                                                    return `$${(num / 1e9).toFixed(2)}B`;
+                                                  } else if (Math.abs(num) >= 1e6) {
+                                                    return `$${(num / 1e6).toFixed(2)}M`;
+                                                  } else {
+                                                    return `$${num.toFixed(2)}`;
+                                                  }
+                                                }
+                                                return value;
+                                              },
+                                            }));
+                                          return dateCol ? [dateCol, ...otherCols] : otherCols;
+                                        })()}
+                                        scroll={{ x: 'max-content' }}
+                                        pagination={false}
+                                      />
+                                    ),
+                                  } : null,
+                                  // 资产负债表
+                                  (analysisResult.indicators.fundamental_data?.BalanceSheet && 
+                                   Array.isArray(analysisResult.indicators.fundamental_data.BalanceSheet) &&
+                                   analysisResult.indicators.fundamental_data.BalanceSheet.length > 0) ? {
+                                    key: 'balance-sheet',
+                                    label: '资产负债表',
+                                    children: (
+                                      <Table
+                                        size="small"
+                                        bordered
+                                        dataSource={analysisResult.indicators.fundamental_data.BalanceSheet.map((record: any, index: number) => ({
+                                          key: index,
+                                          ...record,
+                                        }))}
+                                        columns={(() => {
+                                          if (!analysisResult.indicators.fundamental_data?.BalanceSheet || 
+                                              !Array.isArray(analysisResult.indicators.fundamental_data.BalanceSheet) ||
+                                              analysisResult.indicators.fundamental_data.BalanceSheet.length === 0) {
+                                            return [];
+                                          }
+                                          const firstRecord = analysisResult.indicators.fundamental_data.BalanceSheet[0];
+                                          const dateCol = firstRecord.index || firstRecord.Date ? {
+                                            title: '日期',
+                                            dataIndex: firstRecord.index ? 'index' : 'Date',
+                                            key: 'date',
+                                            width: 120,
+                                            fixed: 'left' as const,
+                                          } : null;
+                                          const otherCols = Object.keys(firstRecord)
+                                            .filter(key => key !== 'index' && key !== 'Date')
+                                            .map(key => ({
+                                              title: key,
+                                              dataIndex: key,
+                                              key: key,
+                                              render: (value: any) => {
+                                                if (value === null || value === undefined || value === '') return '-';
+                                                const num = parseFloat(value);
+                                                if (!isNaN(num)) {
+                                                  if (Math.abs(num) >= 1e9) {
+                                                    return `$${(num / 1e9).toFixed(2)}B`;
+                                                  } else if (Math.abs(num) >= 1e6) {
+                                                    return `$${(num / 1e6).toFixed(2)}M`;
+                                                  } else {
+                                                    return `$${num.toFixed(2)}`;
+                                                  }
+                                                }
+                                                return value;
+                                              },
+                                            }));
+                                          return dateCol ? [dateCol, ...otherCols] : otherCols;
+                                        })()}
+                                        scroll={{ x: 'max-content' }}
+                                        pagination={false}
+                                      />
+                                    ),
+                                  } : null,
+                                  // 现金流量表
+                                  (analysisResult.indicators.fundamental_data?.Cashflow && 
+                                   Array.isArray(analysisResult.indicators.fundamental_data.Cashflow) &&
+                                   analysisResult.indicators.fundamental_data.Cashflow.length > 0) ? {
+                                    key: 'cashflow',
+                                    label: '现金流量表',
+                                    children: (
+                                      <Table
+                                        size="small"
+                                        bordered
+                                        dataSource={analysisResult.indicators.fundamental_data.Cashflow.map((record: any, index: number) => ({
+                                          key: index,
+                                          ...record,
+                                        }))}
+                                        columns={(() => {
+                                          if (!analysisResult.indicators.fundamental_data?.Cashflow || 
+                                              !Array.isArray(analysisResult.indicators.fundamental_data.Cashflow) ||
+                                              analysisResult.indicators.fundamental_data.Cashflow.length === 0) {
+                                            return [];
+                                          }
+                                          const firstRecord = analysisResult.indicators.fundamental_data.Cashflow[0];
+                                          const dateCol = firstRecord.index || firstRecord.Date ? {
+                                            title: '日期',
+                                            dataIndex: firstRecord.index ? 'index' : 'Date',
+                                            key: 'date',
+                                            width: 120,
+                                            fixed: 'left' as const,
+                                          } : null;
+                                          const otherCols = Object.keys(firstRecord)
+                                            .filter(key => key !== 'index' && key !== 'Date')
+                                            .map(key => ({
+                                              title: key,
+                                              dataIndex: key,
+                                              key: key,
+                                              render: (value: any) => {
+                                                if (value === null || value === undefined || value === '') return '-';
+                                                const num = parseFloat(value);
+                                                if (!isNaN(num)) {
+                                                  if (Math.abs(num) >= 1e9) {
+                                                    return `$${(num / 1e9).toFixed(2)}B`;
+                                                  } else if (Math.abs(num) >= 1e6) {
+                                                    return `$${(num / 1e6).toFixed(2)}M`;
+                                                  } else {
+                                                    return `$${num.toFixed(2)}`;
+                                                  }
+                                                }
+                                                return value;
+                                              },
+                                            }));
+                                          return dateCol ? [dateCol, ...otherCols] : otherCols;
+                                        })()}
+                                        scroll={{ x: 'max-content' }}
+                                        pagination={false}
+                                      />
+                                    ),
+                                  } : null,
+                                ].filter((item): item is NonNullable<typeof item> => item !== null)}
+                              />
+                            ),
+                          }] : []),
+                      ]}
+                      style={{ marginTop: 24 }}
+                    />
                     )}
 
                   {/* 缠论分析 */}
@@ -2144,173 +2389,209 @@ const MainPage: React.FC = () => {
                                 />
                               )}
 
-                              {/* 中枢 */}
-                              {analysisResult.indicators.central_banks && analysisResult.indicators.central_banks.length > 0 && (
-                                <div>
-                                  <Text strong style={{ fontSize: 14, marginBottom: 8, display: 'block' }}>
-                                    🏦 中枢（至少3段重叠）
-                                  </Text>
-                                  {analysisResult.indicators.central_banks.map((cb: any, index: number) => {
-                                    const currentPrice = analysisResult.indicators.current_price || 0;
-                                    let position = '';
-                                    let positionColor = 'default';
+                              {/* 中枢和买卖点 - Tab切换表格 */}
+                              {(analysisResult.indicators.central_banks && analysisResult.indicators.central_banks.length > 0) ||
+                               (analysisResult.indicators.trading_points &&
+                                ((analysisResult.indicators.trading_points.buy_points && analysisResult.indicators.trading_points.buy_points.length > 0) ||
+                                 (analysisResult.indicators.trading_points.sell_points && analysisResult.indicators.trading_points.sell_points.length > 0))) ? (
+                                <Tabs
+                                  defaultActiveKey="pivots"
+                                  items={[
+                                    // 中枢
+                                    (analysisResult.indicators.central_banks && analysisResult.indicators.central_banks.length > 0) ? {
+                                      key: 'pivots',
+                                      label: '中枢',
+                                      children: (
+                                        <Table
+                                          size="small"
+                                          bordered
+                                          dataSource={analysisResult.indicators.central_banks.map((cb: any, index: number) => {
+                                            const currentPrice = analysisResult.indicators.current_price || 0;
+                                            let position = '';
+                                            let positionColor = 'default';
 
-                                    if (currentPrice > cb.high) {
-                                      position = '💰 在中枢上方';
-                                      positionColor = 'green';
-                                    } else if (currentPrice < cb.low) {
-                                      position = '📉 在中枢下方';
-                                      positionColor = 'red';
-                                    } else {
-                                      position = '⚖️ 在中枢内震荡';
-                                      positionColor = 'orange';
-                                    }
+                                            if (currentPrice > cb.high) {
+                                              position = '在中枢上方';
+                                              positionColor = 'success';
+                                            } else if (currentPrice < cb.low) {
+                                              position = '在中枢下方';
+                                              positionColor = 'error';
+                                            } else {
+                                              position = '在中枢内震荡';
+                                              positionColor = 'warning';
+                                            }
 
-                                    const typeLabel = cb.type === 'standard' ? '标准3段' : cb.type === 'extended' ? '扩展多段' : '';
+                                            const typeLabel = cb.type === 'standard' ? '标准3段' : cb.type === 'extended' ? '扩展多段' : cb.type === 'expanded' ? '扩张' : '';
 
-                                    return (
-                                      <Descriptions
-                                        key={index}
-                                        bordered
-                                        column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
-                                        size="small"
-                                        style={{ marginTop: index > 0 ? 8 : 0 }}
-                                        items={[
-                                          {
-                                            label: `中枢${index + 1}`,
-                                            span: 1,
-                                            children: <Tag color={positionColor}>{position}</Tag>,
-                                          },
-                                          {
-                                            label: '价格区间',
-                                            span: 1,
-                                            children: `$${formatValue(cb.low)} - $${formatValue(cb.high)}`,
-                                          },
-                                          {
-                                            label: '宽度',
-                                            span: 1,
-                                            children: `${formatValue(cb.width_pct)}%`,
-                                          },
-                                          {
-                                            label: '类型',
-                                            span: 1,
-                                            children: <Tag>{cb.segment_count}段{typeLabel}</Tag>,
-                                          },
-                                        ]}
-                                      />
-                                    );
-                                  })}
-                                </div>
-                              )}
-
-                              {/* 买卖点 */}
-                              {analysisResult.indicators.trading_points && (
-                                <>
-                                  {/* 买入点 */}
-                                  {analysisResult.indicators.trading_points.buy_points &&
-                                    analysisResult.indicators.trading_points.buy_points.length > 0 && (
-                                      <div>
-                                        <Text strong style={{ fontSize: 14, marginBottom: 8, display: 'block' }}>
-                                          💰 缠论买入点
-                                        </Text>
-                                        {analysisResult.indicators.trading_points.buy_points.map((bp: any, index: number) => (
-                                          <Descriptions
-                                            key={index}
-                                            bordered
-                                            column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
-                                            size="small"
-                                            style={{ marginTop: index > 0 ? 8 : 0 }}
-                                            items={[
-                                              {
-                                                label: '类型',
-                                                span: 1,
-                                                children: (
-                                                  <Space>
-                                                    <Tag color="green">{bp.type}</Tag>
-                                                    {bp.has_divergence && <Tag color="volcano">🔥 背驰</Tag>}
-                                                  </Space>
-                                                ),
-                                              },
-                                              {
-                                                label: '价格',
-                                                span: 1,
-                                                children: `$${formatValue(bp.price)}`,
-                                              },
-                                              {
-                                                label: '置信度',
-                                                span: 1,
-                                                children: (
-                                                  <Space>
-                                                    {bp.confidence >= 0.8 && '🌟'}
-                                                    {bp.confidence >= 0.6 && bp.confidence < 0.8 && '⭐'}
-                                                    <Text>{(bp.confidence * 100).toFixed(0)}%</Text>
-                                                  </Space>
-                                                ),
-                                              },
-                                              {
-                                                label: '说明',
-                                                span: 3,
-                                                children: bp.description,
-                                              },
-                                            ]}
-                                          />
-                                        ))}
-                                      </div>
-                                    )}
-
-                                  {/* 卖出点 */}
-                                  {analysisResult.indicators.trading_points.sell_points &&
-                                    analysisResult.indicators.trading_points.sell_points.length > 0 && (
-                                      <div>
-                                        <Text strong style={{ fontSize: 14, marginBottom: 8, display: 'block' }}>
-                                          💸 缠论卖出点
-                                        </Text>
-                                        {analysisResult.indicators.trading_points.sell_points.map((sp: any, index: number) => (
-                                          <Descriptions
-                                            key={index}
-                                            bordered
-                                            column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
-                                            size="small"
-                                            style={{ marginTop: index > 0 ? 8 : 0 }}
-                                            items={[
-                                              {
-                                                label: '类型',
-                                                span: 1,
-                                                children: (
-                                                  <Space>
-                                                    <Tag color="red">{sp.type}</Tag>
-                                                    {sp.has_divergence && <Tag color="volcano">🔥 背驰</Tag>}
-                                                  </Space>
-                                                ),
-                                              },
-                                              {
-                                                label: '价格',
-                                                span: 1,
-                                                children: `$${formatValue(sp.price)}`,
-                                              },
-                                              {
-                                                label: '置信度',
-                                                span: 1,
-                                                children: (
-                                                  <Space>
-                                                    {sp.confidence >= 0.8 && '🌟'}
-                                                    {sp.confidence >= 0.6 && sp.confidence < 0.8 && '⭐'}
-                                                    <Text>{(sp.confidence * 100).toFixed(0)}%</Text>
-                                                  </Space>
-                                                ),
-                                              },
-                                              {
-                                                label: '说明',
-                                                span: 3,
-                                                children: sp.description,
-                                              },
-                                            ]}
-                                          />
-                                        ))}
-                                      </div>
-                                    )}
-                                </>
-                              )}
+                                            return {
+                                              key: index,
+                                              pivot: `中枢${index + 1}`,
+                                              position,
+                                              positionColor,
+                                              priceRange: `$${formatValue(cb.low)} - $${formatValue(cb.high)}`,
+                                              width: `${formatValue(cb.width_pct)}%`,
+                                              type: `${cb.segment_count}段${typeLabel}`,
+                                            };
+                                          })}
+                                          columns={[
+                                            {
+                                              title: '中枢',
+                                              dataIndex: 'pivot',
+                                              key: 'pivot',
+                                              width: 80,
+                                            },
+                                            {
+                                              title: '位置',
+                                              dataIndex: 'position',
+                                              key: 'position',
+                                              width: 120,
+                                              render: (text: string, record: any) => (
+                                                <Tag color={record.positionColor}>{text}</Tag>
+                                              ),
+                                            },
+                                            {
+                                              title: '价格区间',
+                                              dataIndex: 'priceRange',
+                                              key: 'priceRange',
+                                              width: 180,
+                                            },
+                                            {
+                                              title: '宽度',
+                                              dataIndex: 'width',
+                                              key: 'width',
+                                              width: 100,
+                                            },
+                                            {
+                                              title: '类型',
+                                              dataIndex: 'type',
+                                              key: 'type',
+                                            },
+                                          ]}
+                                          pagination={false}
+                                        />
+                                      ),
+                                    } : null,
+                                    // 买入点
+                                    (analysisResult.indicators.trading_points?.buy_points &&
+                                     analysisResult.indicators.trading_points.buy_points.length > 0) ? {
+                                      key: 'buy-points',
+                                      label: '买入点',
+                                      children: (
+                                        <Table
+                                          size="small"
+                                          bordered
+                                          dataSource={analysisResult.indicators.trading_points.buy_points.map((bp: any, index: number) => ({
+                                            key: index,
+                                            type: bp.type,
+                                            hasDivergence: bp.has_divergence,
+                                            price: `$${formatValue(bp.price)}`,
+                                            confidence: bp.confidence,
+                                            description: bp.description,
+                                          }))}
+                                          columns={[
+                                            {
+                                              title: '类型',
+                                              dataIndex: 'type',
+                                              key: 'type',
+                                              width: 100,
+                                              render: (text: string, record: any) => (
+                                                <Space>
+                                                  <Tag color="success">{text}</Tag>
+                                                  {record.hasDivergence && <Tag color="volcano">🔥 背驰</Tag>}
+                                                </Space>
+                                              ),
+                                            },
+                                            {
+                                              title: '价格',
+                                              dataIndex: 'price',
+                                              key: 'price',
+                                              width: 120,
+                                            },
+                                            {
+                                              title: '置信度',
+                                              dataIndex: 'confidence',
+                                              key: 'confidence',
+                                              width: 120,
+                                              render: (confidence: number) => (
+                                                <Space>
+                                                  {confidence >= 0.8 && '🌟'}
+                                                  {confidence >= 0.6 && confidence < 0.8 && '⭐'}
+                                                  <Text>{(confidence * 100).toFixed(0)}%</Text>
+                                                </Space>
+                                              ),
+                                            },
+                                            {
+                                              title: '说明',
+                                              dataIndex: 'description',
+                                              key: 'description',
+                                            },
+                                          ]}
+                                          pagination={false}
+                                        />
+                                      ),
+                                    } : null,
+                                    // 卖出点
+                                    (analysisResult.indicators.trading_points?.sell_points &&
+                                     analysisResult.indicators.trading_points.sell_points.length > 0) ? {
+                                      key: 'sell-points',
+                                      label: '卖出点',
+                                      children: (
+                                        <Table
+                                          size="small"
+                                          bordered
+                                          dataSource={analysisResult.indicators.trading_points.sell_points.map((sp: any, index: number) => ({
+                                            key: index,
+                                            type: sp.type,
+                                            hasDivergence: sp.has_divergence,
+                                            price: `$${formatValue(sp.price)}`,
+                                            confidence: sp.confidence,
+                                            description: sp.description,
+                                          }))}
+                                          columns={[
+                                            {
+                                              title: '类型',
+                                              dataIndex: 'type',
+                                              key: 'type',
+                                              width: 100,
+                                              render: (text: string, record: any) => (
+                                                <Space>
+                                                  <Tag color="error">{text}</Tag>
+                                                  {record.hasDivergence && <Tag color="volcano">🔥 背驰</Tag>}
+                                                </Space>
+                                              ),
+                                            },
+                                            {
+                                              title: '价格',
+                                              dataIndex: 'price',
+                                              key: 'price',
+                                              width: 120,
+                                            },
+                                            {
+                                              title: '置信度',
+                                              dataIndex: 'confidence',
+                                              key: 'confidence',
+                                              width: 120,
+                                              render: (confidence: number) => (
+                                                <Space>
+                                                  {confidence >= 0.8 && '🌟'}
+                                                  {confidence >= 0.6 && confidence < 0.8 && '⭐'}
+                                                  <Text>{(confidence * 100).toFixed(0)}%</Text>
+                                                </Space>
+                                              ),
+                                            },
+                                            {
+                                              title: '说明',
+                                              dataIndex: 'description',
+                                              key: 'description',
+                                            },
+                                          ]}
+                                          pagination={false}
+                                        />
+                                      ),
+                                    } : null,
+                                  ].filter((item): item is NonNullable<typeof item> => item !== null)}
+                                />
+                              ) : null}
 
                               {/* 走势类型 */}
                               {analysisResult.indicators.trend_type && (

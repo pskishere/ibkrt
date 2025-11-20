@@ -47,12 +47,8 @@ logger = logging.getLogger(__name__)
 
 # 创建Flask应用
 app = Flask(__name__)
-CORS(app)  # 允许跨域请求
+CORS(app)
 
-# 全局网关实例
-gateway = None
-
-# SQLite 数据库路径
 DB_PATH = 'stock_cache.db'
 
 def init_database():
@@ -160,6 +156,23 @@ def get_cached_analysis(symbol, duration, bar_size):
         logger.error(f"查询缓存失败: {e}")
         return None
 
+class JSONEncoder(json.JSONEncoder):
+    """自定义JSON编码器，处理pandas Timestamp等特殊类型"""
+    def default(self, obj):
+        if isinstance(obj, pd.Timestamp):
+            return obj.strftime('%Y-%m-%d')
+        elif isinstance(obj, (pd.Series, pd.DataFrame)):
+            return obj.to_dict()
+        elif isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif pd.isna(obj):
+            return None
+        return super().default(obj)
+
 def save_analysis_cache(symbol, duration, bar_size, result):
     """
     保存分析结果到数据库（更新或插入）
@@ -169,6 +182,11 @@ def save_analysis_cache(symbol, duration, bar_size, result):
         cursor = conn.cursor()
         
         today = date.today().isoformat()
+        
+        # 使用自定义编码器序列化数据
+        indicators_json = json.dumps(result.get('indicators', {}), cls=JSONEncoder, ensure_ascii=False)
+        signals_json = json.dumps(result.get('signals', {}), cls=JSONEncoder, ensure_ascii=False)
+        candles_json = json.dumps(result.get('candles', []), cls=JSONEncoder, ensure_ascii=False)
         
         # 使用 INSERT OR REPLACE 来更新或插入数据
         cursor.execute('''
@@ -181,9 +199,9 @@ def save_analysis_cache(symbol, duration, bar_size, result):
             duration,
             bar_size,
             today,
-            json.dumps(result.get('indicators', {})),
-            json.dumps(result.get('signals', {})),
-            json.dumps(result.get('candles', [])),
+            indicators_json,
+            signals_json,
+            candles_json,
             result.get('ai_analysis'),
             result.get('model'),
             1 if result.get('ai_available') else 0
@@ -247,22 +265,9 @@ def get_stock_name(symbol):
         return None
 
 
-class YFinanceGateway:
-    """
-    YFinance数据网关
-    提供股票数据查询、技术指标计算功能
-    """
-    
-    def __init__(self):
-        # 连接状态
-        self.connected = True  # yfinance不需要连接，始终为True
-        
-        # 线程锁
-        self.lock = threading.Lock()
-        
-        logger.info("YFinanceGateway初始化完成")
-    
-    def get_stock_info(self, symbol: str):
+# ==================== YFinance 数据函数 ====================
+
+def get_stock_info(symbol: str):
         """
         获取股票详细信息
         """
@@ -287,89 +292,212 @@ class YFinanceGateway:
         except Exception as e:
             logger.error(f"获取股票信息失败: {symbol}, 错误: {e}")
             return None
+
+def _format_financial_dataframe(df):
+    """
+    格式化财务报表DataFrame为列表格式（字典列表）
+    将DataFrame转换为列表，每个元素是一个日期对应的记录
+    """
+    if df is None or df.empty:
+        return []
     
-    def get_fundamental_data(self, symbol: str):
-        """
-        获取基本面数据（从yfinance）
-        返回公司财务数据、估值指标等
-        """
-        try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
-            
-            if not info:
-                return None
-            
-            # 提取基本面关键指标
-            fundamental = {
-                # 公司信息
-                'companyName': info.get('longName', info.get('shortName', symbol)),
-                'sector': info.get('sector', ''),
-                'industry': info.get('industry', ''),
-                'website': info.get('website', ''),
-                'fullTimeEmployees': info.get('fullTimeEmployees', 0),
-                'businessSummary': info.get('longBusinessSummary', ''),
-                
-                # 市值与价格
-                'marketCap': info.get('marketCap', 0),
-                'enterpriseValue': info.get('enterpriseValue', 0),
-                'currentPrice': info.get('currentPrice', info.get('regularMarketPrice', 0)),
-                'fiftyTwoWeekHigh': info.get('fiftyTwoWeekHigh', 0),
-                'fiftyTwoWeekLow': info.get('fiftyTwoWeekLow', 0),
-                
-                # 估值指标
-                'trailingPE': info.get('trailingPE', 0),  # 市盈率
-                'forwardPE': info.get('forwardPE', 0),  # 预期市盈率
-                'priceToBook': info.get('priceToBook', 0),  # 市净率
-                'priceToSales': info.get('priceToSalesTrailing12Months', 0),  # 市销率
-                'pegRatio': info.get('pegRatio', 0),  # PEG比率
-                
-                # 盈利能力
-                'profitMargins': info.get('profitMargins', 0),  # 净利润率
-                'operatingMargins': info.get('operatingMargins', 0),  # 营业利润率
-                'grossMargins': info.get('grossMargins', 0),  # 毛利率
-                'returnOnEquity': info.get('returnOnEquity', 0),  # ROE
-                'returnOnAssets': info.get('returnOnAssets', 0),  # ROA
-                
-                # 财务健康
-                'totalRevenue': info.get('totalRevenue', 0),  # 总收入
-                'revenuePerShare': info.get('revenuePerShare', 0),  # 每股收入
-                'totalDebt': info.get('totalDebt', 0),  # 总债务
-                'debtToEquity': info.get('debtToEquity', 0),  # 资产负债率
-                'currentRatio': info.get('currentRatio', 0),  # 流动比率
-                'quickRatio': info.get('quickRatio', 0),  # 速动比率
-                
-                # 每股数据
-                'trailingEps': info.get('trailingEps', 0),  # 每股收益
-                'forwardEps': info.get('forwardEps', 0),  # 预期每股收益
-                'bookValue': info.get('bookValue', 0),  # 每股净资产
-                'cashPerShare': info.get('totalCash', 0) / info.get('sharesOutstanding', 1) if info.get('sharesOutstanding') else 0,
-                
-                # 股息
-                'dividendRate': info.get('dividendRate', 0),  # 股息率
-                'dividendYield': info.get('dividendYield', 0),  # 股息收益率
-                'payoutRatio': info.get('payoutRatio', 0),  # 股息支付率
-                
-                # 成长性
-                'revenueGrowth': info.get('revenueGrowth', 0),  # 收入增长率
-                'earningsGrowth': info.get('earningsGrowth', 0),  # 盈利增长率
-                'earningsQuarterlyGrowth': info.get('earningsQuarterlyGrowth', 0),  # 季度盈利增长
-                
-                # 分析师预期
-                'targetHighPrice': info.get('targetHighPrice', 0),  # 目标高价
-                'targetLowPrice': info.get('targetLowPrice', 0),  # 目标低价
-                'targetMeanPrice': info.get('targetMeanPrice', 0),  # 目标平均价
-                'recommendationKey': info.get('recommendationKey', ''),  # 分析师建议
-                'numberOfAnalystOpinions': info.get('numberOfAnalystOpinions', 0),  # 分析师数量
-            }
-            
-            return fundamental
-            
-        except Exception as e:
-            logger.error(f"获取基本面数据失败: {symbol}, 错误: {e}")
+    result = []
+    # 转置DataFrame，使日期为键
+    df_transposed = df.T
+    
+    for date in df_transposed.index:
+        # 处理日期：转换为字符串
+        if hasattr(date, 'strftime'):
+            date_str = date.strftime('%Y-%m-%d')
+        elif isinstance(date, pd.Timestamp):
+            date_str = date.strftime('%Y-%m-%d')
+        else:
+            date_str = str(date)
+        
+        record = {'index': date_str, 'Date': date_str}
+        for col in df_transposed.columns:
+            value = df_transposed.loc[date, col]
+            # 处理NaN值
+            if pd.notna(value):
+                # 处理 Timestamp 对象
+                if isinstance(value, pd.Timestamp):
+                    record[col] = value.strftime('%Y-%m-%d')
+                elif isinstance(value, (int, float, np.number)):
+                    record[col] = float(value)
+                else:
+                    record[col] = str(value)
+            else:
+                record[col] = None
+        
+        result.append(record)
+    
+    return result
+
+def get_fundamental_data(symbol: str):
+    """
+    获取基本面数据（从yfinance）
+    返回公司财务数据、估值指标、财务报表、资产负债表、现金流量表等
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        
+        if not info:
             return None
-    
-    def _get_kline_from_cache(self, symbol: str, interval: str, start_date: str = None):
+        
+        # 计算每股现金（避免除零错误）
+        shares_outstanding = info.get('sharesOutstanding', 0)
+        total_cash = info.get('totalCash', 0)
+        cash_per_share = (total_cash / shares_outstanding) if shares_outstanding and shares_outstanding > 0 else 0
+        
+        # 提取基本面关键指标
+        fundamental = {
+            # 公司信息
+            'CompanyName': info.get('longName', info.get('shortName', symbol)),
+            'ShortName': info.get('shortName', ''),
+            'Exchange': info.get('exchange', ''),
+            'Currency': info.get('currency', 'USD'),
+            'Sector': info.get('sector', ''),
+            'Industry': info.get('industry', ''),
+            'Website': info.get('website', ''),
+            'Employees': info.get('fullTimeEmployees', 0),
+            'BusinessSummary': info.get('longBusinessSummary', ''),
+            
+            # 市值与价格
+            'MarketCap': info.get('marketCap', 0),
+            'EnterpriseValue': info.get('enterpriseValue', 0),
+            'Price': info.get('currentPrice', info.get('regularMarketPrice', 0)),
+            'PreviousClose': info.get('previousClose', 0),
+            '52WeekHigh': info.get('fiftyTwoWeekHigh', 0),
+            '52WeekLow': info.get('fiftyTwoWeekLow', 0),
+            'SharesOutstanding': shares_outstanding,
+            
+            # 估值指标
+            'PE': info.get('trailingPE', 0),  # 市盈率
+            'ForwardPE': info.get('forwardPE', 0),  # 预期市盈率
+            'PriceToBook': info.get('priceToBook', 0),  # 市净率
+            'PriceToSales': info.get('priceToSalesTrailing12Months', 0),  # 市销率
+            'PEGRatio': info.get('pegRatio', 0),  # PEG比率
+            'EVToRevenue': info.get('enterpriseToRevenue', 0),  # 企业价值/营收
+            'EVToEBITDA': info.get('enterpriseToEbitda', 0),  # 企业价值/EBITDA
+            
+            # 盈利能力
+            'ProfitMargin': info.get('profitMargins', 0),  # 净利润率
+            'OperatingMargin': info.get('operatingMargins', 0),  # 营业利润率
+            'GrossMargin': info.get('grossMargins', 0),  # 毛利率
+            'ROE': info.get('returnOnEquity', 0),  # ROE
+            'ROA': info.get('returnOnAssets', 0),  # ROA
+            'ROIC': info.get('returnOnInvestedCapital', 0),  # 投资回报率
+            
+            # 财务健康
+            'RevenueTTM': info.get('totalRevenue', 0),  # 总收入(TTM)
+            'RevenuePerShare': info.get('revenuePerShare', 0),  # 每股收入
+            'NetIncomeTTM': info.get('netIncomeToCommon', 0),  # 净利润(TTM)
+            'EBITDATTM': info.get('ebitda', 0),  # EBITDA(TTM)
+            'TotalDebt': info.get('totalDebt', 0),  # 总债务
+            'TotalCash': total_cash,  # 总现金
+            'CashPerShare': cash_per_share,  # 每股现金
+            'DebtToEquity': info.get('debtToEquity', 0),  # 资产负债率
+            'CurrentRatio': info.get('currentRatio', 0),  # 流动比率
+            'QuickRatio': info.get('quickRatio', 0),  # 速动比率
+            'CashFlow': info.get('operatingCashflow', 0),  # 经营现金流
+            
+            # 每股数据
+            'EPS': info.get('trailingEps', 0),  # 每股收益
+            'ForwardEPS': info.get('forwardEps', 0),  # 预期每股收益
+            'BookValuePerShare': info.get('bookValue', 0),  # 每股净资产
+            'DividendPerShare': info.get('dividendRate', 0),  # 每股股息
+            
+            # 股息
+            'DividendRate': info.get('dividendRate', 0),  # 股息率
+            'DividendYield': info.get('dividendYield', 0),  # 股息收益率
+            'PayoutRatio': info.get('payoutRatio', 0),  # 股息支付率
+            'ExDividendDate': info.get('exDividendDate', 0),  # 除息日
+            
+            # 成长性
+            'RevenueGrowth': info.get('revenueGrowth', 0),  # 收入增长率
+            'EarningsGrowth': info.get('earningsGrowth', 0),  # 盈利增长率
+            'EarningsQuarterlyGrowth': info.get('earningsQuarterlyGrowth', 0),  # 季度盈利增长
+            'QuarterlyRevenueGrowth': info.get('quarterlyRevenueGrowth', 0),  # 季度收入增长
+            
+            # 分析师预期
+            'TargetPrice': info.get('targetMeanPrice', 0),  # 目标平均价
+            'TargetHighPrice': info.get('targetHighPrice', 0),  # 目标高价
+            'TargetLowPrice': info.get('targetLowPrice', 0),  # 目标低价
+            'ConsensusRecommendation': info.get('recommendationMean', 0),  # 共识评级（数值）
+            'RecommendationKey': info.get('recommendationKey', ''),  # 分析师建议（文字）
+            'NumberOfAnalystOpinions': info.get('numberOfAnalystOpinions', 0),  # 分析师数量
+            'ProjectedEPS': info.get('forwardEps', 0),  # 预测EPS
+            'ProjectedGrowthRate': info.get('earningsQuarterlyGrowth', 0),  # 预测增长率
+            
+            # 其他指标
+            'Beta': info.get('beta', 0),  # Beta值
+            'AverageVolume': info.get('averageVolume', 0),  # 平均成交量
+            'AverageVolume10days': info.get('averageVolume10days', 0),  # 10日平均成交量
+            'FloatShares': info.get('floatShares', 0),  # 流通股数
+        }
+        
+        try:
+            financials = ticker.financials
+            if financials is not None and not financials.empty:
+                fundamental['Financials'] = _format_financial_dataframe(financials)
+                logger.info(f"已获取财务报表数据: {symbol}")
+        except Exception as e:
+            logger.warning(f"获取财务报表失败: {symbol}, 错误: {e}")
+            fundamental['Financials'] = []
+        
+        try:
+            quarterly_financials = ticker.quarterly_financials
+            if quarterly_financials is not None and not quarterly_financials.empty:
+                fundamental['QuarterlyFinancials'] = _format_financial_dataframe(quarterly_financials)
+                logger.info(f"已获取季度财务报表数据: {symbol}")
+        except Exception as e:
+            logger.warning(f"获取季度财务报表失败: {symbol}, 错误: {e}")
+            fundamental['QuarterlyFinancials'] = []
+        
+        try:
+            balance_sheet = ticker.balance_sheet
+            if balance_sheet is not None and not balance_sheet.empty:
+                fundamental['BalanceSheet'] = _format_financial_dataframe(balance_sheet)
+                logger.info(f"已获取资产负债表数据: {symbol}")
+        except Exception as e:
+            logger.warning(f"获取资产负债表失败: {symbol}, 错误: {e}")
+            fundamental['BalanceSheet'] = []
+        
+        try:
+            quarterly_balance_sheet = ticker.quarterly_balance_sheet
+            if quarterly_balance_sheet is not None and not quarterly_balance_sheet.empty:
+                fundamental['QuarterlyBalanceSheet'] = _format_financial_dataframe(quarterly_balance_sheet)
+                logger.info(f"已获取季度资产负债表数据: {symbol}")
+        except Exception as e:
+            logger.warning(f"获取季度资产负债表失败: {symbol}, 错误: {e}")
+            fundamental['QuarterlyBalanceSheet'] = []
+        
+        try:
+            cashflow = ticker.cashflow
+            if cashflow is not None and not cashflow.empty:
+                fundamental['Cashflow'] = _format_financial_dataframe(cashflow)
+                logger.info(f"已获取现金流量表数据: {symbol}")
+        except Exception as e:
+            logger.warning(f"获取现金流量表失败: {symbol}, 错误: {e}")
+            fundamental['Cashflow'] = []
+        
+        try:
+            quarterly_cashflow = ticker.quarterly_cashflow
+            if quarterly_cashflow is not None and not quarterly_cashflow.empty:
+                fundamental['QuarterlyCashflow'] = _format_financial_dataframe(quarterly_cashflow)
+                logger.info(f"已获取季度现金流量表数据: {symbol}")
+        except Exception as e:
+            logger.warning(f"获取季度现金流量表失败: {symbol}, 错误: {e}")
+            fundamental['QuarterlyCashflow'] = []
+        
+        return fundamental
+        
+    except Exception as e:
+        logger.error(f"获取基本面数据失败: {symbol}, 错误: {e}")
+        return None
+
+def _get_kline_from_cache(symbol: str, interval: str, start_date: str = None):
         """
         从数据库获取K线数据
         """
@@ -407,8 +535,8 @@ class YFinanceGateway:
         except Exception as e:
             logger.error(f"从缓存获取K线数据失败: {e}")
             return None
-    
-    def _save_kline_to_cache(self, symbol: str, interval: str, df: pd.DataFrame):
+
+def _save_kline_to_cache(symbol: str, interval: str, df: pd.DataFrame):
         """
         保存K线数据到数据库（增量更新）
         """
@@ -438,8 +566,8 @@ class YFinanceGateway:
             logger.info(f"K线数据已缓存: {symbol}, {interval}, {len(df)}条")
         except Exception as e:
             logger.error(f"保存K线数据失败: {e}")
-    
-    def get_historical_data(self, symbol: str, duration: str = '1 D', 
+
+def get_historical_data(symbol: str, duration: str = '1 D', 
                            bar_size: str = '5 mins', exchange: str = '', 
                            currency: str = 'USD'):
         """
@@ -465,7 +593,7 @@ class YFinanceGateway:
             yf_interval = interval_map.get(bar_size, '1d')
             
             # 尝试从缓存获取数据
-            cached_df = self._get_kline_from_cache(symbol, yf_interval)
+            cached_df = _get_kline_from_cache(symbol, yf_interval)
             
             # 统一时区处理
             # 获取当前本地时间（中国时区）
@@ -500,24 +628,20 @@ class YFinanceGateway:
                 need_full_refresh = True
                 logger.info(f"无缓存数据，需要全量获取: {symbol}, {yf_interval}")
             else:
-                # 统一时区
                 if cached_df.index.tzinfo is not None:
                     cached_df.index = cached_df.index.tz_localize(None)
                 
                 first_date = cached_df.index[0]
                 last_date = cached_df.index[-1]
                 
-                # 检查1: 缓存数据是否覆盖至少1年
                 if first_date > one_year_ago:
                     logger.info(f"缓存数据不足1年（最早: {first_date}），需要全量刷新")
                     need_full_refresh = True
-                # 检查2: 最新数据是否过旧（超过7天，兼容周末和假期）
                 elif last_date.date() < (today - timedelta(days=7)).date():
                     logger.info(f"缓存数据过旧（最新: {last_date}），需要全量刷新")
                     need_full_refresh = True
             
             if need_full_refresh:
-                # 全量获取：至少获取2年数据以确保覆盖1年以上
                 logger.info(f"从 yfinance 获取全量数据: {symbol}, 2y, {yf_interval}")
                 ticker = yf.Ticker(symbol)
                 df = ticker.history(period='2y', interval=yf_interval)
@@ -526,67 +650,58 @@ class YFinanceGateway:
                     logger.warning(f"无法获取历史数据: {symbol}")
                     return None, {'code': 200, 'message': f'证券 {symbol} 不存在或没有数据'}
                 
-                # 统一时区
                 if df.index.tzinfo is not None:
                     df.index = df.index.tz_localize(None)
                 
-                # 保存到缓存
-                self._save_kline_to_cache(symbol, yf_interval, df)
+                _save_kline_to_cache(symbol, yf_interval, df)
                 
                 logger.info(f"全量数据已缓存: {symbol}, {yf_interval}, {len(df)}条, 时间范围: {df.index[0]} - {df.index[-1]}")
-                return self._format_historical_data(df), None
+                return _format_historical_data(df), None
             
-            # 增量更新：获取最新数据并合并
             last_cached_date = cached_df.index[-1]
             logger.info(f"使用缓存数据并增量更新: {symbol}, {yf_interval}, 最新: {last_cached_date.date()}")
             
-            # 检查缓存数据是否已是最新
             if last_cached_date.date() >= expected_latest_date:
                 logger.info(f"缓存已是最新数据: {symbol}, 缓存日期={last_cached_date.date()}, 预期最新={expected_latest_date}")
-                return self._format_historical_data(cached_df), None
+                return _format_historical_data(cached_df), None
             
             try:
                 ticker = yf.Ticker(symbol)
-                # 获取最近10天的数据以确保覆盖周末、节假日和时区差异
                 new_data = ticker.history(period='10d', interval=yf_interval)
                 
                 if not new_data.empty:
-                    # 统一时区
                     if new_data.index.tzinfo is not None:
                         new_data.index = new_data.index.tz_localize(None)
                     
-                    # 检查是否有新数据
                     new_data_filtered = new_data[new_data.index > last_cached_date]
                     
                     if not new_data_filtered.empty:
-                        # 有新数据，合并
                         combined_df = pd.concat([cached_df, new_data])
                         combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
                         combined_df = combined_df.sort_index()
                         
-                        # 保存新数据到缓存
-                        self._save_kline_to_cache(symbol, yf_interval, new_data)
+                        _save_kline_to_cache(symbol, yf_interval, new_data)
                         
                         logger.info(f"增量更新完成: {symbol}, 新增{len(new_data_filtered)}条, 总计{len(combined_df)}条, 最新: {combined_df.index[-1].date()}")
-                        return self._format_historical_data(combined_df), None
+                        return _format_historical_data(combined_df), None
                     else:
                         # 无新数据，可能是非交易日或时区原因
                         logger.info(f"无新数据，返回缓存数据: {symbol}, 缓存最新日期: {last_cached_date.date()}")
-                        return self._format_historical_data(cached_df), None
+                        return _format_historical_data(cached_df), None
                 else:
                     logger.info(f"获取最新数据为空，返回缓存数据")
-                    return self._format_historical_data(cached_df), None
+                    return _format_historical_data(cached_df), None
                     
             except Exception as e:
                 logger.warning(f"增量更新失败: {e}，返回缓存数据")
             
-            return self._format_historical_data(cached_df), None
+            return _format_historical_data(cached_df), None
             
         except Exception as e:
             logger.error(f"获取历史数据失败: {symbol}, 错误: {e}")
             return None, {'code': 500, 'message': str(e)}
-    
-    def _format_historical_data(self, df: pd.DataFrame):
+
+def _format_historical_data(df: pd.DataFrame):
         """
         格式化历史数据
         """
@@ -608,17 +723,15 @@ class YFinanceGateway:
             })
         
         return result
-    
-    def calculate_technical_indicators(self, symbol: str, duration: str = '1 M', bar_size: str = '1 day'):
+
+def calculate_technical_indicators(symbol: str, duration: str = '1 M', bar_size: str = '1 day'):
         """
         计算技术指标（基于历史数据）
         返回：移动平均线、RSI、MACD等
         如果证券不存在，返回(None, error_info)
         """
-        # 获取历史数据
-        hist_data, error = self.get_historical_data(symbol, duration, bar_size)
+        hist_data, error = get_historical_data(symbol, duration, bar_size)
         
-        # 如果有错误，返回错误信息
         if error:
             return None, error
         
@@ -626,7 +739,6 @@ class YFinanceGateway:
             logger.warning(f"数据不足，无法计算技术指标: {symbol}")
             return None, None
         
-        # 提取收盘价
         closes = np.array([bar['close'] for bar in hist_data])
         highs = np.array([bar['high'] for bar in hist_data])
         lows = np.array([bar['low'] for bar in hist_data])
@@ -744,11 +856,19 @@ class YFinanceGateway:
             ichimoku_data = calculate_ichimoku(closes, highs, lows)
             result.update(ichimoku_data)
 
-        # yfinance不提供基本面数据，这部分移除
+        # 25. 获取基本面数据
+        try:
+            fundamental_data = get_fundamental_data(symbol)
+            if fundamental_data:
+                result['fundamental_data'] = fundamental_data
+                logger.info(f"已获取基本面数据: {symbol}")
+        except Exception as e:
+            logger.warning(f"获取基本面数据失败: {symbol}, 错误: {e}")
+            result['fundamental_data'] = None
             
         return result, None  # 返回结果和错误信息（无错误为None）
-        
-    def generate_signals(self, indicators: dict):
+
+def generate_signals(indicators: dict):
         """
         基于技术指标生成买卖信号
         """
@@ -1136,7 +1256,7 @@ class YFinanceGateway:
             signals['action'] = 'strong_sell'
         
         # 风险评估
-        risk_assessment = self._assess_risk(indicators)
+        risk_assessment = _assess_risk(indicators)
         signals['risk'] = {
             'level': risk_assessment['level'],
             'score': risk_assessment['score'],
@@ -1148,13 +1268,13 @@ class YFinanceGateway:
         signals['risk_factors'] = risk_assessment['factors']
         
         # 止损止盈建议
-        stop_loss_profit = self._calculate_stop_loss_profit(indicators)
+        stop_loss_profit = _calculate_stop_loss_profit(indicators)
         signals['stop_loss'] = stop_loss_profit.get('stop_loss')
         signals['take_profit'] = stop_loss_profit.get('take_profit')
             
         return signals
-    
-    def _assess_risk(self, indicators: dict):
+
+def _assess_risk(indicators: dict):
         """
         评估投资风险等级
         """
@@ -1261,8 +1381,8 @@ class YFinanceGateway:
             'score': int(risk_score),
             'factors': risk_factors
         }
-    
-    def _calculate_stop_loss_profit(self, indicators: dict):
+
+def _calculate_stop_loss_profit(indicators: dict):
         """
         计算建议的止损和止盈价位
         """
@@ -1272,39 +1392,25 @@ class YFinanceGateway:
         
         result = {}
         
-        # 基于ATR的止损止盈
         if 'atr' in indicators:
             atr = indicators['atr']
-            
-            # 止损：当前价格 - 2倍ATR
             result['stop_loss'] = float(current_price - 2 * atr)
-            
-            # 止盈：当前价格 + 3倍ATR (风险回报比1.5:1)
             result['take_profit'] = float(current_price + 3 * atr)
-            
-        # 基于支撑压力位的止损止盈
         elif 'support_20d_low' in indicators and 'resistance_20d_high' in indicators:
             support = indicators['support_20d_low']
             resistance = indicators['resistance_20d_high']
-            
-            # 止损设在支撑位下方
             result['stop_loss'] = float(support * 0.98)
-            
-            # 止盈设在压力位
             result['take_profit'] = float(resistance)
-        
-        # 简单百分比止损止盈
         else:
-            result['stop_loss'] = float(current_price * 0.95)  # -5%
-            result['take_profit'] = float(current_price * 1.10)  # +10%
+            result['stop_loss'] = float(current_price * 0.95)
+            result['take_profit'] = float(current_price * 1.10)
         
-        # 仓位管理建议
-        position_sizing = self._calculate_position_sizing(indicators, result)
+        position_sizing = _calculate_position_sizing(indicators, result)
         result.update(position_sizing)
         
         return result
-    
-    def _calculate_position_sizing(self, indicators: dict, stop_loss_data: dict):
+
+def _calculate_position_sizing(indicators: dict, stop_loss_data: dict):
         """
         计算建议的仓位大小和风险管理
         """
@@ -1316,29 +1422,21 @@ class YFinanceGateway:
         if not current_price or not stop_loss:
             return result
             
-        # 计算每股风险
         risk_per_share = current_price - stop_loss
+        account_value = 100000
+        max_risk_amount = account_value * 0.02
         
-        # 假设账户风险承受能力为总资金的2%
-        # 这里我们使用一个示例账户价值，实际应用中应该从账户信息获取
-        account_value = 100000  # 假设账户价值为10万美元
-        max_risk_amount = account_value * 0.02  # 最大风险金额为账户的2%
-        
-        # 计算建议仓位大小
         if risk_per_share > 0:
             suggested_position_size = int(max_risk_amount / risk_per_share)
             result['suggested_position_size'] = suggested_position_size
             result['position_risk_amount'] = float(suggested_position_size * risk_per_share)
             
-            # 计算仓位价值
             position_value = suggested_position_size * current_price
             result['position_value'] = float(position_value)
             
-            # 计算仓位占账户比例
             position_ratio = (position_value / account_value) * 100
             result['position_ratio'] = float(position_ratio)
             
-            # 根据风险等级调整仓位
             risk_level = indicators.get('risk_level', 'medium')
             risk_multiplier = {
                 'very_low': 1.5,
@@ -1351,9 +1449,8 @@ class YFinanceGateway:
             adjusted_position_size = int(suggested_position_size * risk_multiplier.get(risk_level, 1.0))
             result['adjusted_position_size'] = adjusted_position_size
             
-            # 添加仓位管理建议
             result['position_sizing_advice'] = {
-                'max_risk_percent': 2,  # 最大风险百分比
+                'max_risk_percent': 2,
                 'risk_per_share': float(risk_per_share),
                 'suggested_size': suggested_position_size,
                 'adjusted_size': adjusted_position_size,
@@ -1378,22 +1475,6 @@ def health():
     })
 
 
-# 已移除交易相关API端点(connect, disconnect, account, positions, orders, executions, order, quote)
-
-
-# 已移除 /api/history/<symbol> 接口
-# 历史K线数据仅在内部使用，不对外提供独立API
-
-
-# 已移除 /api/info/<symbol> 接口
-# 股票信息仅在内部使用，不对外提供独立API
-
-
-# 已移除 /api/fundamental/<symbol> 接口
-# 基本面数据仅在内部使用（AI分析时自动获取），不对外提供独立API
-
-
-# 以下是AI分析相关的辅助函数
 def _check_ollama_available():
     """
     检查 Ollama 是否可用
@@ -1402,28 +1483,21 @@ def _check_ollama_available():
         import ollama
         import requests
         
-        # 从环境变量读取Ollama服务地址
         ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
         
-        # 先尝试使用 requests 快速检查服务是否运行
         try:
             response = requests.get(f'{ollama_host}/api/tags', timeout=2)
             if response.status_code == 200:
-                # 服务运行中，尝试验证 ollama 模块是否可用
                 try:
                     client = ollama.Client(host=ollama_host)
-                    # 尝试列出模型来验证服务是否可用
                     client.list()
                     return True
                 except Exception:
-                    # ollama 模块可能有问题，但服务在运行
                     return True
             return False
         except Exception:
-            # 服务不可用
             return False
     except ImportError:
-        # ollama 模块未安装
         return False
 
 
@@ -1434,7 +1508,6 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
     try:
         import ollama
         
-        # 格式化基本面数据
         fundamental_data = indicators.get('fundamental_data', {})
         has_fundamental = (fundamental_data and 
                           isinstance(fundamental_data, dict) and 
@@ -1442,10 +1515,8 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
                           len(fundamental_data) > 0)
         
         if has_fundamental:
-            # 格式化基本面数据为易读格式
             fundamental_sections = []
             
-            # 基本信息
             if 'CompanyName' in fundamental_data:
                 info_parts = [f"公司名称: {fundamental_data['CompanyName']}"]
                 if 'Exchange' in fundamental_data:
@@ -1579,6 +1650,107 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
             if forecast_parts:
                 fundamental_sections.append("分析师预测:\n" + "\n".join([f"   - {p}" for p in forecast_parts]))
             
+            # 详细财务报表数据
+            if fundamental_data.get('Financials'):
+                try:
+                    financials = fundamental_data['Financials']
+                    if isinstance(financials, list) and len(financials) > 0:
+                        financials_text = "年度财务报表:\n"
+                        for record in financials[:5]:  # 最近5年
+                            if isinstance(record, dict):
+                                date = record.get('index', record.get('Date', 'N/A'))
+                                financials_text += f"   {date}:\n"
+                                for key, value in record.items():
+                                    if key not in ['index', 'Date'] and value:
+                                        try:
+                                            val = float(value)
+                                            if abs(val) >= 1e9:
+                                                financials_text += f"     - {key}: ${val/1e9:.2f}B\n"
+                                            elif abs(val) >= 1e6:
+                                                financials_text += f"     - {key}: ${val/1e6:.2f}M\n"
+                                            else:
+                                                financials_text += f"     - {key}: ${val:.2f}\n"
+                                        except:
+                                            financials_text += f"     - {key}: {value}\n"
+                        fundamental_sections.append(financials_text)
+                except Exception as e:
+                    logger.warning(f"格式化年度财务报表失败: {e}")
+            
+            if fundamental_data.get('QuarterlyFinancials'):
+                try:
+                    quarterly = fundamental_data['QuarterlyFinancials']
+                    if isinstance(quarterly, list) and len(quarterly) > 0:
+                        quarterly_text = "季度财务报表:\n"
+                        for record in quarterly[:4]:  # 最近4个季度
+                            if isinstance(record, dict):
+                                date = record.get('index', record.get('Date', 'N/A'))
+                                quarterly_text += f"   {date}:\n"
+                                for key, value in record.items():
+                                    if key not in ['index', 'Date'] and value:
+                                        try:
+                                            val = float(value)
+                                            if abs(val) >= 1e9:
+                                                quarterly_text += f"     - {key}: ${val/1e9:.2f}B\n"
+                                            elif abs(val) >= 1e6:
+                                                quarterly_text += f"     - {key}: ${val/1e6:.2f}M\n"
+                                            else:
+                                                quarterly_text += f"     - {key}: ${val:.2f}\n"
+                                        except:
+                                            quarterly_text += f"     - {key}: {value}\n"
+                        fundamental_sections.append(quarterly_text)
+                except Exception as e:
+                    logger.warning(f"格式化季度财务报表失败: {e}")
+            
+            if fundamental_data.get('BalanceSheet'):
+                try:
+                    balance = fundamental_data['BalanceSheet']
+                    if isinstance(balance, list) and len(balance) > 0:
+                        balance_text = "年度资产负债表:\n"
+                        for record in balance[:3]:  # 最近3年
+                            if isinstance(record, dict):
+                                date = record.get('index', record.get('Date', 'N/A'))
+                                balance_text += f"   {date}:\n"
+                                for key, value in record.items():
+                                    if key not in ['index', 'Date'] and value:
+                                        try:
+                                            val = float(value)
+                                            if abs(val) >= 1e9:
+                                                balance_text += f"     - {key}: ${val/1e9:.2f}B\n"
+                                            elif abs(val) >= 1e6:
+                                                balance_text += f"     - {key}: ${val/1e6:.2f}M\n"
+                                            else:
+                                                balance_text += f"     - {key}: ${val:.2f}\n"
+                                        except:
+                                            balance_text += f"     - {key}: {value}\n"
+                        fundamental_sections.append(balance_text)
+                except Exception as e:
+                    logger.warning(f"格式化资产负债表失败: {e}")
+            
+            if fundamental_data.get('Cashflow'):
+                try:
+                    cashflow = fundamental_data['Cashflow']
+                    if isinstance(cashflow, list) and len(cashflow) > 0:
+                        cashflow_text = "年度现金流量表:\n"
+                        for record in cashflow[:3]:  # 最近3年
+                            if isinstance(record, dict):
+                                date = record.get('index', record.get('Date', 'N/A'))
+                                cashflow_text += f"   {date}:\n"
+                                for key, value in record.items():
+                                    if key not in ['index', 'Date'] and value:
+                                        try:
+                                            val = float(value)
+                                            if abs(val) >= 1e9:
+                                                cashflow_text += f"     - {key}: ${val/1e9:.2f}B\n"
+                                            elif abs(val) >= 1e6:
+                                                cashflow_text += f"     - {key}: ${val/1e6:.2f}M\n"
+                                            else:
+                                                cashflow_text += f"     - {key}: ${val:.2f}\n"
+                                        except:
+                                            cashflow_text += f"     - {key}: {value}\n"
+                        fundamental_sections.append(cashflow_text)
+                except Exception as e:
+                    logger.warning(f"格式化现金流量表失败: {e}")
+            
             fundamental_text = "\n\n".join(fundamental_sections) if fundamental_sections else "无可用数据"
         else:
             fundamental_text = None
@@ -1672,13 +1844,18 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
 
 请提供以下分析:
 1. 技术面分析: 当前市场状态（趋势、动能、波动）、关键技术信号解读
-2. 基本面分析: 公司财务状况评估、估值水平分析、盈利能力评价
+2. 基本面分析: 
+   - 基于财务指标和财务报表数据，分析公司财务状况、盈利能力、现金流健康度
+   - 通过对比年度和季度财务报表，识别营收、利润、现金流的变化趋势
+   - 分析资产负债表，评估公司资产结构、负债水平和财务稳健性
+   - 结合机构持有人信息，评估市场对公司前景的认可度
+   - 估值水平分析：结合PE、PB、ROE等指标，判断当前估值是否合理
 3. 综合分析: 结合技术面和基本面，给出买入/卖出/观望的具体建议
-4. 风险提示: 技术风险和基本面风险的综合评估
+4. 风险提示: 技术风险和基本面风险的综合评估（重点关注财务报表中的风险信号）
 5. 操作建议: 建议的止损止盈位、仓位管理建议（重点关注SAR止损位和VWAP价格偏离度）
 6. 市场展望: 结合技术指标和基本面数据，分析未来可能的情境（牛市、熊市、震荡市中的不同策略）
 
-请用中文回答，简洁专业，重点突出，将技术分析和基本面分析有机结合。"""
+请用中文回答，简洁专业，重点突出，将技术分析和基本面分析有机结合。在基本面分析中，请充分利用提供的财务报表、资产负债表、现金流量表等详细数据，进行深入分析。"""
         else:
             # 没有基本面数据，只进行技术分析
             prompt = f"""你是一位专业的股票技术分析师。请基于以下技术指标数据，给出详细的技术分析和交易建议。
@@ -1795,12 +1972,6 @@ def analyze_stock(symbol):
     - bar_size: K线周期 (默认: '1 day')
     - model: AI模型名称 (默认: 'deepseek-v3.1:671b-cloud')，仅在Ollama可用时使用
     """
-    if not gateway:
-        return jsonify({
-            'success': False,
-            'message': '网关未初始化'
-        }), 400
-    
     duration = request.args.get('duration', '3 M')
     bar_size = request.args.get('bar_size', '1 day')
     model = request.args.get('model', 'deepseek-v3.1:671b-cloud')
@@ -1837,33 +2008,25 @@ def analyze_stock(symbol):
     
     logger.info(f"技术分析: {symbol_upper}, {duration}, {bar_size}")
     
-    # 获取股票信息并保存到数据库
     try:
-        stock_info = gateway.get_stock_info(symbol_upper)
+        stock_info = get_stock_info(symbol_upper)
         if stock_info:
             stock_name = None
-            # 处理返回的数据结构
             if isinstance(stock_info, dict):
                 stock_name = stock_info.get('longName', '')
             elif isinstance(stock_info, list) and len(stock_info) > 0:
-                # 如果返回的是列表，取第一个
                 stock_data = stock_info[0]
                 if isinstance(stock_data, dict):
                     stock_name = stock_data.get('longName', '')
             
-            # 如果有有效的股票名称，保存到数据库
             if stock_name and stock_name.strip() and stock_name != symbol_upper:
                 save_stock_info(symbol_upper, stock_name.strip())
     except Exception as e:
         logger.warning(f"获取股票信息失败: {e}")
     
-    # 获取历史K线数据
-    hist_data, hist_error = gateway.get_historical_data(symbol_upper, duration, bar_size)
+    hist_data, hist_error = get_historical_data(symbol_upper, duration, bar_size)
+    indicators, ind_error = calculate_technical_indicators(symbol_upper, duration, bar_size)
     
-    # 计算技术指标
-    indicators, ind_error = gateway.calculate_technical_indicators(symbol_upper, duration, bar_size)
-    
-    # 检查是否有错误（如证券不存在）
     if ind_error:
         return jsonify({
             'success': False,
@@ -1878,7 +2041,7 @@ def analyze_stock(symbol):
         }), 404
     
     # 生成买卖信号
-    signals = gateway.generate_signals(indicators)
+    signals = generate_signals(indicators)
     
     # 格式化K线数据
     formatted_candles = []
@@ -1886,12 +2049,10 @@ def analyze_stock(symbol):
         for bar in hist_data:
             date_str = bar.get('date', '')
             try:
-                # 解析日期格式 "20250818" -> "2025-08-18"
                 if len(date_str) == 8:
                     dt = datetime.strptime(date_str, '%Y%m%d')
                     time_str = dt.strftime('%Y-%m-%d')
                 elif ' ' in date_str:
-                    # 处理 "20250818 16:00:00" 格式
                     dt = datetime.strptime(date_str, '%Y%m%d %H:%M:%S')
                     time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
                 else:
@@ -1909,7 +2070,6 @@ def analyze_stock(symbol):
                 'volume': int(bar.get('volume', 0)),
             })
     
-    # 构建返回数据
     result = {
         'success': True,
         'indicators': indicators,
@@ -1917,7 +2077,6 @@ def analyze_stock(symbol):
         'candles': formatted_candles
     }
     
-    # 自动检测 Ollama 是否可用，如果可用则执行AI分析
     if _check_ollama_available():
         logger.info(f"检测到 Ollama 可用，开始AI分析...")
         try:
@@ -1939,10 +2098,6 @@ def analyze_stock(symbol):
     return jsonify(result)
 
 
-# 已移除 /api/ai-analyze/<symbol> 接口
-# AI分析已整合到 /api/analyze 中，会自动检测Ollama并执行AI分析
-
-
 @app.route('/api/refresh-analyze/<symbol>', methods=['POST'])
 def refresh_analyze_stock(symbol):
     """
@@ -1954,12 +2109,6 @@ def refresh_analyze_stock(symbol):
     - bar_size: K线周期 (默认: '1 day')
     - model: AI模型名称 (默认: 'deepseek-v3.1:671b-cloud')，仅在Ollama可用时使用
     """
-    if not gateway:
-        return jsonify({
-            'success': False,
-            'message': '网关未初始化'
-        }), 400
-    
     duration = request.args.get('duration', '3 M')
     bar_size = request.args.get('bar_size', '1 day')
     model = request.args.get('model', 'deepseek-v3.1:671b-cloud')
@@ -1970,7 +2119,7 @@ def refresh_analyze_stock(symbol):
     
     # 获取股票信息并保存到数据库
     try:
-        stock_info = gateway.get_stock_info(symbol_upper)
+        stock_info = get_stock_info(symbol_upper)
         if stock_info:
             stock_name = None
             # 处理返回的数据结构
@@ -1989,10 +2138,10 @@ def refresh_analyze_stock(symbol):
         logger.warning(f"获取股票信息失败: {e}")
     
     # 获取历史K线数据
-    hist_data, hist_error = gateway.get_historical_data(symbol_upper, duration, bar_size)
+    hist_data, hist_error = get_historical_data(symbol_upper, duration, bar_size)
     
     # 计算技术指标
-    indicators, ind_error = gateway.calculate_technical_indicators(symbol_upper, duration, bar_size)
+    indicators, ind_error = calculate_technical_indicators(symbol_upper, duration, bar_size)
     
     # 检查是否有错误（如证券不存在）
     if ind_error:
@@ -2009,7 +2158,7 @@ def refresh_analyze_stock(symbol):
         }), 404
     
     # 生成买卖信号
-    signals = gateway.generate_signals(indicators)
+    signals = generate_signals(indicators)
     
     # 格式化K线数据
     formatted_candles = []
@@ -2017,12 +2166,10 @@ def refresh_analyze_stock(symbol):
         for bar in hist_data:
             date_str = bar.get('date', '')
             try:
-                # 解析日期格式 "20250818" -> "2025-08-18"
                 if len(date_str) == 8:
                     dt = datetime.strptime(date_str, '%Y%m%d')
                     time_str = dt.strftime('%Y-%m-%d')
                 elif ' ' in date_str:
-                    # 处理 "20250818 16:00:00" 格式
                     dt = datetime.strptime(date_str, '%Y%m%d %H:%M:%S')
                     time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
                 else:
@@ -2040,7 +2187,6 @@ def refresh_analyze_stock(symbol):
                 'volume': int(bar.get('volume', 0)),
             })
     
-    # 构建返回数据
     result = {
         'success': True,
         'indicators': indicators,
@@ -2048,7 +2194,6 @@ def refresh_analyze_stock(symbol):
         'candles': formatted_candles
     }
     
-    # 自动检测 Ollama 是否可用，如果可用则执行AI分析
     if _check_ollama_available():
         logger.info(f"检测到 Ollama 可用，开始AI分析...")
         try:
@@ -2130,6 +2275,21 @@ def get_hot_stocks():
         })
 
 
+def _load_indicator_info():
+    """
+    从JSON文件加载技术指标解释和参考范围
+    """
+    try:
+        json_path = os.path.join(os.path.dirname(__file__), 'indicator_info.json')
+        with open(json_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error(f"未找到指标信息文件: {json_path}")
+        return {}
+    except Exception as e:
+        logger.error(f"加载指标信息失败: {e}")
+        return {}
+
 @app.route('/api/indicator-info', methods=['GET'])
 def get_indicator_info():
     """
@@ -2139,543 +2299,14 @@ def get_indicator_info():
     """
     indicator_name = request.args.get('indicator', '').lower()
     
-    # 定义所有技术指标的解释和参考范围
-    indicator_info = {
-        'ma': {
-            'name': '移动平均线 MA',
-            'description': '移动平均线用于平滑价格波动，识别趋势方向',
-            'calculation': 'MA = (P1 + P2 + ... + Pn) / n，其中P为收盘价，n为周期',
-            'reference_range': {
-                'ma5': 'MA5: 5日均线，用于观察短期趋势与支撑/压力',
-                'ma10': 'MA10: 10日均线，用于观察中短期趋势与支撑/压力',
-                'ma20': 'MA20: 20日均线，用于观察中期趋势与支撑/压力',
-                'ma50': 'MA50: 50日均线，用于观察长期趋势与支撑/压力'
-            },
-            'interpretation': '价格上穿均线常视为偏强，下穿视为偏弱；多均线多头/空头排列用于判断趋势延续',
-            'usage': '结合价格与均线位置判断趋势，多均线排列判断趋势强度'
-        },
-        'rsi': {
-            'name': 'RSI 相对强弱指数',
-            'description': 'RSI衡量价格动能，反映超买超卖状态',
-            'calculation': 'RSI = 100 - (100 / (1 + RS))，其中RS = 平均上涨幅度 / 平均下跌幅度',
-            'reference_range': {
-                '超卖': '<30 超卖区域，可能反弹',
-                '正常': '30-70 正常区间',
-                '超买': '>70 超买区域，可能回调'
-            },
-            'interpretation': 'RSI衡量价格动能，极端值提示可能的反转风险，但需结合趋势',
-            'usage': 'RSI<30关注反弹机会，RSI>70注意回调风险，结合趋势方向使用'
-        },
-        'bb': {
-            'name': '布林带 Bollinger Bands',
-            'description': '布林带通过标准差衡量价格波动范围',
-            'calculation': '中轨=MA(20)，上轨=中轨+2*标准差，下轨=中轨-2*标准差',
-            'reference_range': {
-                '上轨': '价格接近上轨可能回调',
-                '中轨': '价格在中轨附近震荡',
-                '下轨': '价格接近下轨可能反弹',
-                '带宽': '带宽扩大常伴随波动放大'
-            },
-            'interpretation': '价格接近上轨可能回调，接近下轨可能反弹；带宽扩大常伴随波动放大',
-            'usage': '价格触及上下轨关注反转，带宽变化判断波动率'
-        },
-        'macd': {
-            'name': 'MACD 指标',
-            'description': 'MACD通过快慢均线差异判断趋势和动能，是趋势跟踪和动量指标',
-            'calculation': 'MACD = EMA(12) - EMA(26)，Signal = EMA(9) of MACD，Histogram = MACD - Signal',
-            'reference_range': {
-                'MACD线': 'MACD = 短期均线(12日) - 长期均线(26日)。正值表示短期趋势强于长期（上涨动能），负值表示短期趋势弱于长期（下跌动能）。数值越大，趋势越强',
-                'Signal线': 'Signal是MACD的9日移动平均，用于平滑MACD信号。Signal线在MACD上方表示趋势可能转弱，在下方表示趋势可能转强',
-                'Histogram柱状图': 'Histogram = MACD - Signal。柱状图为正且增大表示上涨动能增强，为负且减小表示下跌动能减弱。柱状图由负转正（零轴上方）是买入信号，由正转负（零轴下方）是卖出信号',
-                '金叉': 'MACD线从下方穿越Signal线（MACD > Signal），表示上涨动能增强，通常视为买入信号',
-                '死叉': 'MACD线从上方穿越Signal线（MACD < Signal），表示上涨动能减弱，通常视为卖出信号',
-                '零轴': 'MACD在零轴上方表示整体趋势向上，在零轴下方表示整体趋势向下。MACD穿越零轴是重要的趋势转换信号'
-            },
-            'interpretation': 'MACD数值本身没有固定范围，需要结合股票价格来理解。例如：MACD = 0.5 表示12日均线比26日均线高0.5美元。MACD > 0 且持续增大，表示上涨趋势加速；MACD < 0 且持续减小，表示下跌趋势加速。Histogram柱状图的高度表示动能强度，柱状图越高（绝对值越大），动能越强。当MACD和Signal都在零轴上方且MACD > Signal时，是最强的看涨信号；反之，都在零轴下方且MACD < Signal时，是最强的看跌信号',
-            'usage': '1) 关注MACD与Signal的交叉点（金叉/死叉）作为买卖信号；2) 观察Histogram柱状图的变化趋势，柱状图增大表示动能增强；3) 结合MACD与零轴的位置判断整体趋势方向；4) 当MACD、Signal和Histogram三者同向时，信号更可靠；5) 在震荡市中MACD可能频繁交叉，需要结合其他指标确认'
-        },
-        'kdj': {
-            'name': 'KDJ 指标',
-            'description': 'KDJ通过最高价、最低价和收盘价计算超买超卖',
-            'calculation': 'K = (RSV的3日移动平均)，D = (K的3日移动平均)，J = 3K - 2D',
-            'reference_range': {
-                '超卖': 'J<20 常见超卖，可能反弹',
-                '正常': '20-80 正常区间',
-                '超买': 'J>80 常见超买，可能回调',
-                '金叉': 'K上穿D视为偏强信号',
-                '死叉': 'K下穿D视为偏弱信号'
-            },
-            'interpretation': 'J<20常见超卖，J>80常见超买；K上穿D视为偏强信号',
-            'usage': '关注J值极端区域，K与D交叉判断买卖信号'
-        },
-        'williams_r': {
-            'name': 'Williams %R',
-            'description': '威廉指标衡量收盘价在最高最低价区间的位置',
-            'calculation': '%R = (最高价 - 收盘价) / (最高价 - 最低价) * -100',
-            'reference_range': {
-                '超卖': '< -80 超卖区域，可能反弹',
-                '正常': '-80 到 -20 正常区间',
-                '超买': '> -20 超买区域，可能回调'
-            },
-            'interpretation': '与RSI类似，用于刻画超买超卖区间，宜结合趋势判读',
-            'usage': '关注极端值区域，结合趋势方向判断'
-        },
-        'cci': {
-            'name': 'CCI 顺势指标',
-            'description': 'CCI通过比较当前价格与平均价格的偏离程度，测量价格是否超买或超卖',
-            'calculation': 'CCI = (典型价格 - 典型价格移动平均) / (0.015 * 平均绝对偏差)，其中典型价格 = (最高价 + 最低价 + 收盘价) / 3',
-            'reference_range': {
-                '超卖': 'CCI < -100 超卖区域，价格可能过低，注意反弹机会',
-                '正常': '-100 到 +100 正常波动区间',
-                '超买': 'CCI > +100 超买区域，价格可能过高，注意回调风险',
-                '极端超卖': 'CCI < -200 极端超卖，强烈反弹信号',
-                '极端超买': 'CCI > +200 极端超买，强烈回调信号'
-            },
-            'interpretation': 'CCI是一个波动指标，主要用于识别超买超卖状态。CCI > +100表示价格高于平均水平较多，可能超买；CCI < -100表示价格低于平均水平较多，可能超卖。CCI穿越零轴也是重要信号：从负转正是看涨信号，从正转负是看跌信号',
-            'usage': '1) 关注CCI穿越±100线作为买卖信号；2) CCI > +100且继续上升表示强势，可持有；3) CCI < -100且继续下降表示弱势，需谨慎；4) 结合趋势使用，上升趋势中CCI回落至-100附近是买入机会；5) 注意背离：价格创新高但CCI未创新高是看跌信号'
-        },
-        'adx': {
-            'name': 'ADX 平均趋向指标',
-            'description': 'ADX用于衡量趋势的强度，不论趋势方向如何。配合+DI和-DI可以判断趋势方向',
-            'calculation': 'ADX是DX的移动平均，其中DX = |(+DI) - (-DI)| / |(+DI) + (-DI)| * 100。+DI和-DI基于价格变动计算',
-            'reference_range': {
-                '无趋势': 'ADX < 20 趋势不明显，市场处于震荡状态，不适合趋势跟随策略',
-                '弱趋势': 'ADX 20-25 趋势较弱，市场可能开始走出趋势',
-                '中趋势': 'ADX 25-40 趋势明显，趋势跟随策略有效',
-                '强趋势': 'ADX 40-60 趋势强劲，适合趋势跟随',
-                '极强趋势': 'ADX > 60 趋势极强，但可能即将反转或调整',
-                '+DI > -DI': '+DI在-DI上方表示上升趋势，多头主导',
-                '-DI > +DI': '-DI在+DI上方表示下降趋势，空头主导'
-            },
-            'interpretation': 'ADX只衡量趋势强度，不表示趋势方向。ADX上升表示趋势增强，ADX下降表示趋势减弱。+DI和-DI用于判断趋势方向：+DI > -DI表示上升趋势，-DI > +DI表示下降趋势。当ADX > 25且+DI > -DI时，是强烈的看涨信号；当ADX > 25且-DI > +DI时，是强烈的看跌信号',
-            'usage': '1) ADX < 20时避免趋势跟随策略，适合区间交易；2) ADX > 25时采用趋势跟随策略；3) 关注+DI和-DI的交叉：+DI上穿-DI是买入信号，-DI上穿+DI是卖出信号；4) ADX从低位上升表示趋势形成，可跟随趋势；5) ADX > 60后开始下降表示趋势可能衰竭，需谨慎'
-        },
-        'vwap': {
-            'name': 'VWAP 成交量加权平均价',
-            'description': 'VWAP是根据成交量加权的平均价格，反映机构投资者的平均成本，常用于判断价格是否合理',
-            'calculation': 'VWAP = ∑(价格 × 成交量) / ∑成交量，通常基于当日或近期数据计算',
-            'reference_range': {
-                '低于VWAP': '价格 < VWAP 价格低于机构成本，可能是买入机会，但需确认下跌动能是否衰竭',
-                '高于VWAP': '价格 > VWAP 价格高于机构成本，表示买盘强劲，但需注意回调风险',
-                '接近VWAP': '价格接近VWAP 多空力量平衡，可能发生方向选择',
-                '支撑作用': '上升趋势中VWAP常作为支撑位，回调至VWAP附近是买入机会',
-                '压力作用': '下降趋势中VWAP常作为压力位，反弹至VWAP附近是卖出机会'
-            },
-            'interpretation': 'VWAP是机构投资者常用的参考指标。价格高于VWAP表示当前买家成本高于市场平均成本，买盘强劲；价格低于VWAP表示当前卖家成本低于市场平均成本，卖盘压力较大。VWAP在日内交易中特别重要，机构常以VWAP作为买卖基准',
-            'usage': '1) 价格回落至VWAP附近且获得支撑时，可考虑买入；2) 价格突破VWAP且成交量放大，表示趋势可能持续；3) 日内交易中，价格低于VWAP时买入，高于VWAP时卖出；4) 结合趋势方向，上升趋势中VWAP是支撑，下降趋势中VWAP是压力；5) 关注价格与VWAP的偏离程度，过度偏离可能回归'
-        },
-        'sar': {
-            'name': 'SAR 抛物线转向指标',
-            'description': 'SAR是一种趋势跟随指标，通过在价格上下方显示点位来指示止损位和趋势方向',
-            'calculation': 'SAR基于加速因子（AF）和极值点（EP）计算，趋势每持续一期AF就增加，使SAR逐渐靠近价格',
-            'reference_range': {
-                'SAR在下方': 'SAR < 价格 看涨信号，SAR点位可作为止损位，价格跌破SAR则趋势反转',
-                'SAR在上方': 'SAR > 价格 看跌信号，SAR点位可作为止损位，价格突破SAR则趋势反转',
-                '转向信号': 'SAR从下方转到上方是卖出信号，从SAR上方转到下方是买入信号',
-                '距离远近': 'SAR距离价格较远表示趋势刚形成，较近表示趋势持续较久可能反转'
-            },
-            'interpretation': 'SAR是一种简单有效的趋势跟随工具。SAR在价格下方表示上升趋势，在价格上方表示下降趋势。SAR点位可以直接用作止损位。当价格突破SAR时，趋势发生反转，SAR也从一侧跳到另一侧。SAR在趋势市中非常有效，但在震荡市中可能产生较多假信号',
-            'usage': '1) SAR在价格下方时持有多头，以SAR为止损位；2) SAR在价格上方时持有空头或空仓，以SAR为止损位；3) SAR翻转时进行反向操作：从SAR下方转到上方则平多开空，从SAR上方转到下方则平空开多；4) 结合ADX使用，当ADX > 25时SAR信号更可靠；5) 震荡市中谨慎使用，可能产生频繁的假信号'
-        },
-        'ichimoku': {
-            'name': '一目均衡表 Ichimoku Cloud',
-            'description': '一目均衡表是一个综合性的技术指标，用于判断市场趋势、支撑阻力位以及买卖信号',
-            'calculation': '包含五条线：转折线(Tenkan-sen)、基准线(Kijun-sen)、先行带A(Senkou Span A)、先行带B(Senkou Span B)和迟行带(Chikou Span)',
-            'reference_range': {
-                '云层': '先行带A和B之间的区域称为"云"。价格在云上为看涨，云下为看跌，云中为盘整',
-                '金叉': '转折线上穿基准线，视为买入信号',
-                '死叉': '转折线下穿基准线，视为卖出信号',
-                '迟行带': '迟行带在价格上方确认看涨，下方确认看跌'
-            },
-            'interpretation': '一目均衡表提供了全面的市场视图。云层厚度代表支撑/阻力的强度。价格突破云层通常是强烈的趋势信号',
-            'usage': '1) 观察价格与云层的关系判断大趋势；2) 关注转折线与基准线的交叉作为交易信号；3) 使用迟行带确认趋势强度'
-        },
-        'supertrend': {
-            'name': 'SuperTrend 超级趋势',
-            'description': 'SuperTrend是一个趋势跟踪指标，类似于移动平均线，但结合了ATR来过滤噪音',
-            'calculation': '基于ATR和中位数价格计算上下轨，价格突破轨道则趋势反转',
-            'reference_range': {
-                '看涨': '价格在SuperTrend线上方，显示绿色，作为支撑位',
-                '看跌': '价格在SuperTrend线下方，显示红色，作为阻力位'
-            },
-            'interpretation': 'SuperTrend是非常直观的趋势指标。绿色表示看涨，红色表示看跌。线的变色点是买卖信号',
-            'usage': '1) 趋势跟随：绿色做多，红色做空；2) 止损位：SuperTrend线本身就是极佳的移动止损位'
-        },
-        'stoch_rsi': {
-            'name': 'StochRSI 随机相对强弱指数',
-            'description': 'StochRSI是将随机指标(Stochastic)应用于RSI指标，用于提高RSI的灵敏度',
-            'calculation': 'StochRSI = (RSI - MinRSI) / (MaxRSI - MinRSI)',
-            'reference_range': {
-                '超卖': '<0.2 (或20) 超卖区域，可能反弹',
-                '超买': '>0.8 (或80) 超买区域，可能回调',
-                '中性': '0.2-0.8 正常波动'
-            },
-            'interpretation': 'StochRSI比普通RSI更灵敏，能更快捕捉短期的超买超卖。但也更容易产生假信号',
-            'usage': '1) 寻找极端值：>0.8卖出，<0.2买入；2) 结合趋势：上升趋势中关注超卖买入机会'
-        },
-        'volume_profile': {
-            'name': 'Volume Profile 筹码分布',
-            'description': '筹码分布显示特定时间段内不同价格水平的成交量，用于识别关键的支撑和阻力位',
-            'calculation': '统计每个价格区间的成交量，计算POC(控制点)、VAH(价值区上沿)、VAL(价值区下沿)',
-            'reference_range': {
-                'POC': 'Point of Control，成交量最大的价格水平，是最强的引力点',
-                'VA': 'Value Area，包含70%成交量的价格区间',
-                '上方失衡': '价格在价值区上方，可能回调或继续上涨',
-                '下方失衡': '价格在价值区下方，可能反弹或继续下跌'
-            },
-            'interpretation': 'POC是市场公认的公平价格，价格常围绕POC波动。VAH和VAL是重要的支撑阻力位',
-            'usage': '1) 价格回调至POC或VA边缘时寻找反弹机会；2) 价格突破VA通常意味着新的趋势开始'
-        },
-        'atr': {
-            'name': 'ATR 平均真实波幅',
-            'description': 'ATR衡量价格波动幅度，用于设置止损和仓位',
-            'calculation': 'TR = max(最高价-最低价, |最高价-前收盘|, |最低价-前收盘|)，ATR = TR的N日移动平均',
-            'reference_range': {
-                '低波动': 'ATR较小，波动率低',
-                '高波动': 'ATR较大，波动率高'
-            },
-            'interpretation': 'ATR反映近段真实波幅，用于设置止损与仓位',
-            'usage': 'ATR大时设置更宽止损，ATR小时设置更紧止损'
-        },
-        'volatility': {
-            'name': '波动率',
-            'description': '波动率衡量价格变化的幅度',
-            'calculation': '波动率 = 标准差 / 平均值 * 100',
-            'reference_range': {
-                '低': '≤2% 低波动',
-                '中': '2-3% 中等波动',
-                '高': '3-5% 高波动',
-                '极高': '>5% 极高波动'
-            },
-            'interpretation': '波动大时风险与机会并存',
-            'usage': '波动率高时注意风险控制，波动率低时可能酝酿突破'
-        },
-        'volume_ratio': {
-            'name': '成交量比率',
-            'description': '成交量比率反映当前成交量与平均成交量的关系',
-            'calculation': '成交量比率 = 当前成交量 / 平均成交量',
-            'reference_range': {
-                '缩量': '<0.7 缩量，市场参与度低',
-                '正常': '0.7-1.5 正常成交量',
-                '放量': '>1.5 放量，市场参与度高'
-            },
-            'interpretation': '放量通常伴随价格突破，缩量可能预示趋势减弱',
-            'usage': '结合价格变化判断量价关系，放量突破更可靠'
-        },
-        'obv': {
-            'name': 'OBV 能量潮',
-            'description': 'OBV通过成交量变化判断资金流向',
-            'calculation': '价格上涨时OBV增加，价格下跌时OBV减少',
-            'reference_range': {
-                '上升': 'OBV上升，资金流入',
-                '下降': 'OBV下降，资金流出',
-                '量价齐升': 'OBV上升且价格上涨，强势信号',
-                '量价背离': 'OBV与价格反向，可能反转'
-            },
-            'interpretation': 'OBV趋势与价格趋势一致时趋势更可靠，背离时注意反转',
-            'usage': '关注OBV趋势方向，结合价格判断量价关系'
-        },
-        'trend_strength': {
-            'name': '趋势强度',
-            'description': '趋势强度衡量当前趋势的可靠性',
-            'calculation': '基于多个技术指标的综合评估',
-            'reference_range': {
-                '弱': '0-25% 趋势较弱',
-                '中': '25-50% 趋势中等',
-                '强': '>50% 趋势较强'
-            },
-            'interpretation': '趋势强度高时趋势延续概率大，强度低时可能反转',
-            'usage': '结合趋势方向，强度高时顺势操作，强度低时谨慎'
-        },
-        'pivot': {
-            'name': '枢轴点 Pivot Point',
-            'description': '枢轴点是基于前一交易日的高点、低点和收盘价计算的关键价位，用于预测当日的支撑位和压力位',
-            'calculation': 'Pivot = (最高价 + 最低价 + 收盘价) / 3',
-            'reference_range': {
-                '枢轴点': '枢轴点是多空力量的平衡点，价格在枢轴点上方表示偏强，在下方表示偏弱',
-                '支撑位': 'S1、S2、S3是支撑位，价格接近支撑位时可能获得支撑反弹',
-                '压力位': 'R1、R2、R3是压力位，价格接近压力位时可能遇到阻力回落'
-            },
-            'interpretation': '枢轴点系统是日内交易常用的技术工具。价格在枢轴点上方表示多头占优，在下方表示空头占优。支撑位和压力位是重要的参考价位，价格接近这些位置时可能出现反弹或回调',
-            'usage': '1) 观察价格与枢轴点的关系：在枢轴点上方看多，在下方看空；2) 在支撑位附近寻找买入机会；3) 在压力位附近注意卖出或减仓；4) 破位需要结合成交量确认'
-        },
-        'pivot_r1': {
-            'name': '压力位R1',
-            'description': 'R1是第一阻力位，基于枢轴点计算，是价格可能遇到阻力的第一个关键价位',
-            'calculation': 'R1 = 2 × Pivot - 最低价',
-            'reference_range': {
-                '阻力': '价格接近R1时可能遇到阻力，需要关注是否能够突破',
-                '突破': '价格突破R1后，下一个阻力位是R2'
-            },
-            'interpretation': 'R1是第一个压力位，价格接近R1时可能遇到阻力。如果价格能够突破R1，通常表示上涨动能较强，可能继续上涨至R2',
-            'usage': '1) 价格接近R1时注意阻力；2) 突破R1是看涨信号；3) 在R1附近可以考虑减仓或设置止损'
-        },
-        'pivot_r2': {
-            'name': '压力位R2',
-            'description': 'R2是第二阻力位，是更强的阻力位，价格突破R1后可能在此遇到阻力',
-            'calculation': 'R2 = Pivot + (最高价 - 最低价)',
-            'reference_range': {
-                '强阻力': 'R2是较强的阻力位，价格突破R2通常表示强势上涨',
-                '回调': '价格在R2附近可能回调'
-            },
-            'interpretation': 'R2是第二个压力位，通常比R1更强。价格突破R2表示上涨动能很强，可能继续上涨至R3',
-            'usage': '1) 价格接近R2时注意强阻力；2) 突破R2是强势看涨信号；3) 在R2附近可以考虑大幅减仓'
-        },
-        'pivot_r3': {
-            'name': '压力位R3',
-            'description': 'R3是第三阻力位，是最强的阻力位，价格很少能够突破R3',
-            'calculation': 'R3 = 最高价 + 2 × (Pivot - 最低价)',
-            'reference_range': {
-                '极强阻力': 'R3是极强的阻力位，价格很少能够突破',
-                '超买': '价格接近R3通常表示超买，可能大幅回调'
-            },
-            'interpretation': 'R3是最强的压力位，价格很少能够突破R3。价格接近R3通常表示超买，可能出现大幅回调',
-            'usage': '1) 价格接近R3时注意极强阻力；2) 在R3附近应该考虑大幅减仓或全部卖出；3) 突破R3是极强势信号，但很少发生'
-        },
-        'pivot_s1': {
-            'name': '支撑位S1',
-            'description': 'S1是第一支撑位，基于枢轴点计算，是价格可能获得支撑的第一个关键价位',
-            'calculation': 'S1 = 2 × Pivot - 最高价',
-            'reference_range': {
-                '支撑': '价格接近S1时可能获得支撑，需要关注是否能够守住',
-                '跌破': '价格跌破S1后，下一个支撑位是S2'
-            },
-            'interpretation': 'S1是第一个支撑位，价格接近S1时可能获得支撑。如果价格跌破S1，通常表示下跌动能较强，可能继续下跌至S2',
-            'usage': '1) 价格接近S1时注意支撑；2) 在S1附近可以考虑买入或加仓；3) 跌破S1是看跌信号'
-        },
-        'pivot_s2': {
-            'name': '支撑位S2',
-            'description': 'S2是第二支撑位，是更强的支撑位，价格跌破S1后可能在此获得支撑',
-            'calculation': 'S2 = Pivot - (最高价 - 最低价)',
-            'reference_range': {
-                '强支撑': 'S2是较强的支撑位，价格在S2附近可能反弹',
-                '继续下跌': '价格跌破S2通常表示弱势下跌'
-            },
-            'interpretation': 'S2是第二个支撑位，通常比S1更强。价格在S2附近可能获得支撑反弹，跌破S2表示下跌动能很强',
-            'usage': '1) 价格接近S2时注意强支撑；2) 在S2附近可以考虑买入；3) 跌破S2是弱势看跌信号'
-        },
-        'pivot_s3': {
-            'name': '支撑位S3',
-            'description': 'S3是第三支撑位，是最强的支撑位，价格很少能够跌破S3',
-            'calculation': 'S3 = 最低价 - 2 × (最高价 - Pivot)',
-            'reference_range': {
-                '极强支撑': 'S3是极强的支撑位，价格很少能够跌破',
-                '超卖': '价格接近S3通常表示超卖，可能大幅反弹'
-            },
-            'interpretation': 'S3是最强的支撑位，价格很少能够跌破S3。价格接近S3通常表示超卖，可能出现大幅反弹',
-            'usage': '1) 价格接近S3时注意极强支撑；2) 在S3附近应该考虑买入；3) 跌破S3是极弱势信号，但很少发生'
-        },
-        'resistance_20d_high': {
-            'name': '20日高点 Resistance',
-            'description': '20日高点是最近20个交易日的最高价，是重要的阻力位',
-            'calculation': '20日高点 = 最近20个交易日的最高价',
-            'reference_range': {
-                '阻力': '价格接近20日高点时可能遇到阻力',
-                '突破': '价格突破20日高点通常表示上涨趋势延续'
-            },
-            'interpretation': '20日高点是重要的阻力位。价格接近20日高点时可能遇到阻力，突破20日高点通常表示上涨趋势延续，是看涨信号',
-            'usage': '1) 价格接近20日高点时注意阻力；2) 突破20日高点是看涨信号；3) 在20日高点附近可以考虑减仓'
-        },
-        'support_20d_low': {
-            'name': '20日低点 Support',
-            'description': '20日低点是最近20个交易日的最低价，是重要的支撑位',
-            'calculation': '20日低点 = 最近20个交易日的最低价',
-            'reference_range': {
-                '支撑': '价格接近20日低点时可能获得支撑',
-                '跌破': '价格跌破20日低点通常表示下跌趋势延续'
-            },
-            'interpretation': '20日低点是重要的支撑位。价格接近20日低点时可能获得支撑，跌破20日低点通常表示下跌趋势延续，是看跌信号',
-            'usage': '1) 价格接近20日低点时注意支撑；2) 在20日低点附近可以考虑买入；3) 跌破20日低点是看跌信号'
-        },
-        'chanlun': {
-            'name': '缠论 Chanlun Theory',
-            'description': '缠论是一种基于价格走势结构的技术分析方法，通过分型、笔、线段、中枢等结构来识别趋势和买卖点',
-            'calculation': '缠论通过识别K线图中的分型点，连接分型形成笔，组合笔形成线段，识别线段重叠形成中枢，最终判断走势类型',
-            'reference_range': {
-                '分型': '分型是缠论的基础结构。顶分型：中间K线的高点最高且低点也最高，表示可能的顶部；底分型：中间K线的低点最低且高点也最低，表示可能的底部。分型需要至少3根K线才能确认',
-                '笔': '笔是连接相邻顶分型和底分型的线段。上涨笔：从底分型到顶分型；下跌笔：从顶分型到底分型。笔必须满足一定的价格幅度（通常至少0.5%）才有效。笔是趋势的基本单位',
-                '线段': '线段是由至少3笔组成的更大结构。上涨线段：整体向上，由上涨笔和下跌笔交替组成；下跌线段：整体向下。线段代表更大级别的趋势',
-                '中枢': '中枢是价格震荡的区间，由至少3个线段的重叠部分形成。中枢上沿：重叠区间的最高价；中枢下沿：重叠区间的最低价。中枢代表多空力量平衡的区域，是重要的支撑和压力位',
-                '走势类型': '上涨：价格整体向上，高点不断抬高，低点也不断抬高；下跌：价格整体向下，高点不断降低，低点也不断降低；盘整：价格在一定区间内震荡，没有明确的趋势方向'
-            },
-            'interpretation': '缠论通过识别价格走势的结构来判断趋势和买卖点。分型是转折点，笔是基本趋势单位，线段是更大级别的趋势，中枢是重要的支撑压力区域。当价格突破中枢时，通常意味着趋势的延续或反转。上涨走势中，回调不破前低是买入机会；下跌走势中，反弹不破前高是卖出机会。盘整走势中，可以在中枢上下沿进行高抛低吸',
-            'usage': '1) 识别分型：寻找顶分型和底分型，这些是潜在的转折点；2) 观察笔的方向：上涨笔和下跌笔的交替可以判断短期趋势；3) 分析线段：线段的方向代表更大级别的趋势，线段结束通常意味着趋势可能反转；4) 关注中枢：中枢是重要的支撑和压力位，价格在中枢内震荡，突破中枢可能意味着趋势延续；5) 判断走势类型：根据走势类型选择操作策略，上涨走势中寻找买入机会，下跌走势中注意风险，盘整走势中高抛低吸；6) 结合其他指标：缠论结构需要结合成交量、MACD等指标来确认信号的有效性'
-        },
-        'fractals': {
-            'name': '缠论-分型 Fractals',
-            'description': '分型是缠论的基础结构，用于识别价格的转折点',
-            'calculation': '顶分型：中间K线的高点 > 前一根K线的高点 且 > 后一根K线的高点，同时中间K线的低点 > 前一根K线的低点 且 > 后一根K线的低点；底分型：中间K线的低点 < 前一根K线的低点 且 < 后一根K线的低点，同时中间K线的高点 < 前一根K线的高点 且 < 后一根K线的高点',
-            'reference_range': {
-                '顶分型': '顶分型出现在上涨趋势中，表示可能的顶部。如果后续价格跌破顶分型的最低点，通常确认顶部形成',
-                '底分型': '底分型出现在下跌趋势中，表示可能的底部。如果后续价格突破底分型的最高点，通常确认底部形成',
-                '确认': '分型需要至少3根K线才能确认，单独的分型可能失效，需要结合后续走势确认'
-            },
-            'interpretation': '分型是价格转折的潜在信号。顶分型表示上涨动能减弱，可能出现回调或反转；底分型表示下跌动能减弱，可能出现反弹或反转。但分型本身不是买卖信号，需要结合笔、线段等更大结构来判断',
-            'usage': '1) 识别分型：在K线图中标记顶分型和底分型；2) 等待确认：分型形成后，等待后续K线确认是否有效；3) 结合笔：分型是笔的起点和终点，通过分型可以识别笔；4) 注意失效：如果后续价格突破分型的高低点，分型可能失效'
-        },
-        'strokes': {
-            'name': '缠论-笔 Strokes',
-            'description': '笔是连接相邻顶分型和底分型的线段，是缠论中趋势的基本单位',
-            'calculation': '笔由两个相邻的分型连接而成。上涨笔：从底分型到顶分型；下跌笔：从顶分型到底分型。笔必须满足一定的价格幅度（通常至少0.5%）才有效',
-            'reference_range': {
-                '上涨笔': '上涨笔表示短期上涨趋势，从底分型开始到顶分型结束。上涨笔的结束通常意味着可能出现回调',
-                '下跌笔': '下跌笔表示短期下跌趋势，从顶分型开始到底分型结束。下跌笔的结束通常意味着可能出现反弹',
-                '笔的长度': '笔的长度（K线数量）和价格幅度可以判断趋势的强度。长笔表示趋势较强，短笔表示趋势较弱'
-            },
-            'interpretation': '笔是趋势的基本单位。上涨笔和下跌笔的交替可以判断短期趋势。连续的上涨笔表示上涨趋势，连续的下跌笔表示下跌趋势。笔的结束通常意味着趋势可能反转或进入盘整',
-            'usage': '1) 识别笔：通过分型连接形成笔；2) 观察笔的方向：上涨笔和下跌笔的交替可以判断短期趋势；3) 判断笔的结束：当新的反向笔形成时，前一笔结束；4) 结合线段：笔是线段的组成部分，通过笔可以识别线段'
-        },
-        'segments': {
-            'name': '缠论-线段 Segments',
-            'description': '线段是由至少3笔组成的更大结构，代表更大级别的趋势',
-            'calculation': '线段由至少3笔组成。上涨线段：整体向上，由上涨笔和下跌笔交替组成，但整体趋势向上；下跌线段：整体向下，由下跌笔和上涨笔交替组成，但整体趋势向下',
-            'reference_range': {
-                '上涨线段': '上涨线段表示更大级别的上涨趋势。上涨线段的结束通常意味着可能出现较大级别的回调或反转',
-                '下跌线段': '下跌线段表示更大级别的下跌趋势。下跌线段的结束通常意味着可能出现较大级别的反弹或反转',
-                '线段结束': '线段的结束通常需要新的反向线段形成来确认。线段结束是重要的趋势转换信号'
-            },
-            'interpretation': '线段代表更大级别的趋势。上涨线段表示中期或长期上涨趋势，下跌线段表示中期或长期下跌趋势。线段的结束通常意味着趋势可能反转，是重要的买卖信号',
-            'usage': '1) 识别线段：通过笔的组合识别线段；2) 判断线段方向：上涨线段和下跌线段的方向代表更大级别的趋势；3) 关注线段结束：线段结束是重要的趋势转换信号，可以寻找买卖机会；4) 结合中枢：线段的重叠可以形成中枢'
-        },
-        'central_banks': {
-            'name': '缠论-中枢 Central Banks',
-            'description': '中枢是价格震荡的区间，由至少3个线段的重叠部分形成，是重要的支撑和压力位',
-            'calculation': '中枢由至少3个线段的重叠部分形成。中枢上沿：重叠区间的最高价；中枢下沿：重叠区间的最低价；中枢中心：上沿和下沿的平均值；中枢宽度：上沿和下沿的差值',
-            'reference_range': {
-                '中枢上沿': '中枢上沿是重要的压力位。价格接近或触及上沿时，可能遇到阻力',
-                '中枢下沿': '中枢下沿是重要的支撑位。价格接近或触及下沿时，可能获得支撑',
-                '中枢中心': '中枢中心是多空力量的平衡点。价格在中枢中心附近震荡，表示多空力量平衡',
-                '中枢宽度': '中枢宽度表示震荡的幅度。宽度越大，震荡幅度越大；宽度越小，震荡幅度越小',
-                '突破中枢': '价格突破中枢上沿，通常意味着上涨趋势延续；价格跌破中枢下沿，通常意味着下跌趋势延续',
-                '回踩中枢': '价格突破中枢后回踩中枢，如果在中枢上沿获得支撑，是买入机会；如果在中枢下沿遇到阻力，是卖出机会'
-            },
-            'interpretation': '中枢是重要的支撑和压力区域。价格在中枢内震荡，表示多空力量平衡。价格突破中枢，通常意味着趋势的延续或反转。中枢的上下沿是重要的支撑和压力位，可以在这些位置寻找买卖机会',
-            'usage': '1) 识别中枢：通过线段的重叠识别中枢；2) 关注中枢上下沿：中枢上下沿是重要的支撑和压力位；3) 观察突破：价格突破中枢可能意味着趋势延续；4) 等待回踩：价格突破中枢后回踩，如果获得支撑或遇到阻力，是买卖机会；5) 结合走势类型：在盘整走势中，可以在中枢上下沿高抛低吸'
-        },
-        'trend_type': {
-            'name': '缠论-走势类型 Trend Type',
-            'description': '走势类型是根据缠论结构判断的整体趋势方向，包括上涨、下跌和盘整',
-            'calculation': '走势类型通过分析线段的方向和中枢的位置来判断。上涨：高点不断抬高，低点也不断抬高；下跌：高点不断降低，低点也不断降低；盘整：价格在一定区间内震荡，没有明确的趋势方向',
-            'reference_range': {
-                '上涨': '上涨走势中，价格整体向上，高点不断抬高，低点也不断抬高。上涨走势中，回调不破前低是买入机会',
-                '下跌': '下跌走势中，价格整体向下，高点不断降低，低点也不断降低。下跌走势中，反弹不破前高是卖出机会',
-                '盘整': '盘整走势中，价格在一定区间内震荡，没有明确的趋势方向。盘整走势中，可以在区间上下沿高抛低吸',
-                '转换': '走势类型的转换是重要的信号。从上涨转为下跌，或从下跌转为上涨，通常意味着趋势的反转'
-            },
-            'interpretation': '走势类型决定了操作策略。上涨走势中，应该寻找买入机会，回调是买入时机；下跌走势中，应该注意风险，反弹是卖出时机；盘整走势中，可以在区间上下沿高抛低吸。走势类型的转换是重要的趋势反转信号',
-            'usage': '1) 判断走势类型：根据线段方向和中枢位置判断走势类型；2) 选择操作策略：根据走势类型选择相应的操作策略；3) 关注转换：走势类型的转换是重要的趋势反转信号；4) 结合其他指标：走势类型需要结合成交量、MACD等指标来确认'
-        },
-        'fundamental': {
-            'name': '基本面数据 Fundamental Data',
-            'description': '基本面数据反映公司的财务状况、经营业绩和市场估值，用于评估公司的内在价值和投资价值',
-            'calculation': '基本面数据来自公司财务报表和市场数据，包括营收、利润、估值指标等',
-            'reference_range': {
-                '基本信息': '公司名称、交易所、员工数、流通股数等基本信息，用于了解公司的基本概况',
-                '市值与价格': '市值反映公司的市场价值，当前价和52周区间反映价格波动范围',
-                '财务指标': '营收、净利润、EBITDA等反映公司的盈利能力，利润率反映盈利质量',
-                '每股数据': 'EPS、每股净资产、每股现金、每股股息等反映每股股东权益和收益',
-                '估值指标': 'PE、PB、ROE等用于评估公司估值水平和盈利能力',
-                '分析师预测': '目标价、共识评级、预测EPS等反映市场对公司未来的预期'
-            },
-            'interpretation': '基本面数据用于评估公司的内在价值。财务指标反映公司盈利能力，估值指标反映市场对公司价值的认可程度，分析师预测反映市场对公司未来的预期。基本面分析需要结合行业对比和历史趋势来判断',
-            'usage': '1) 评估盈利能力：关注营收、净利润、利润率等指标；2) 评估估值水平：关注PE、PB等估值指标；3) 评估成长性：关注增长率、预测EPS等指标；4) 结合技术分析：基本面分析需要结合技术分析来做出投资决策'
-        },
-        'market_cap': {
-            'name': '市值 Market Capitalization',
-            'description': '市值是公司股票总价值，等于股价乘以流通股数',
-            'calculation': '市值 = 当前股价 × 流通股数',
-            'reference_range': {
-                '大盘股': '市值 > $100亿，通常更稳定，流动性好',
-                '中盘股': '市值 $10亿 - $100亿，成长性和稳定性平衡',
-                '小盘股': '市值 < $10亿，成长潜力大但风险也高'
-            },
-            'interpretation': '市值反映公司的市场价值。大盘股通常更稳定，小盘股成长潜力大但风险高。市值需要结合行业和盈利能力来判断',
-            'usage': '结合行业对比和盈利能力评估市值是否合理'
-        },
-        'pe': {
-            'name': '市盈率 PE Ratio',
-            'description': '市盈率是股价与每股收益的比率，反映投资者愿意为每元收益支付的价格',
-            'calculation': 'PE = 股价 / 每股收益(EPS)',
-            'reference_range': {
-                '低估': 'PE < 15，可能被低估，但需结合成长性判断',
-                '合理': 'PE 15-25，估值相对合理',
-                '高估': 'PE > 25，可能被高估，需关注成长性是否支撑高估值'
-            },
-            'interpretation': 'PE反映市场对公司盈利能力的估值。低PE可能表示低估或增长缓慢，高PE可能表示高估或高成长预期。需要结合行业和成长性来判断',
-            'usage': '1) 结合行业对比：不同行业的PE水平不同；2) 结合成长性：高成长公司可以支撑更高的PE；3) 结合历史PE：对比历史PE水平判断当前估值'
-        },
-        'pb': {
-            'name': '市净率 PB Ratio',
-            'description': '市净率是股价与每股净资产的比率，反映股价相对于账面价值的高低',
-            'calculation': 'PB = 股价 / 每股净资产',
-            'reference_range': {
-                '低估': 'PB < 1，股价低于账面价值，可能被低估',
-                '合理': 'PB 1-3，估值相对合理',
-                '高估': 'PB > 3，股价远高于账面价值，需关注盈利能力是否支撑'
-            },
-            'interpretation': 'PB反映市场对公司净资产的估值。PB < 1可能表示低估，PB > 3可能表示高估。需要结合ROE和行业特点来判断',
-            'usage': '1) 结合ROE：高ROE可以支撑更高的PB；2) 结合行业：不同行业的PB水平不同；3) 结合资产质量：关注资产的实际价值'
-        },
-        'roe': {
-            'name': '净资产收益率 ROE',
-            'description': 'ROE是净利润与净资产的比率，反映公司使用股东资金创造利润的能力',
-            'calculation': 'ROE = 净利润 / 净资产 × 100%',
-            'reference_range': {
-                '优秀': 'ROE > 15%，盈利能力优秀',
-                '良好': 'ROE 10-15%，盈利能力良好',
-                '一般': 'ROE < 10%，盈利能力一般'
-            },
-            'interpretation': 'ROE反映公司的盈利能力。高ROE表示公司能够有效使用股东资金创造利润。需要结合行业和可持续性来判断',
-            'usage': '1) 结合行业对比：不同行业的ROE水平不同；2) 关注可持续性：持续的高ROE更有价值；3) 结合PB：高ROE可以支撑更高的PB'
-        },
-        'eps': {
-            'name': '每股收益 EPS',
-            'description': 'EPS是公司净利润除以流通股数，反映每股股票的盈利能力',
-            'calculation': 'EPS = 净利润 / 流通股数',
-            'reference_range': {
-                '增长': 'EPS持续增长表示盈利能力提升',
-                '稳定': 'EPS稳定表示盈利能力稳定',
-                '下降': 'EPS下降表示盈利能力下降'
-            },
-            'interpretation': 'EPS反映每股股票的盈利能力。EPS增长表示公司盈利能力提升，EPS下降表示盈利能力下降。需要结合营收增长来判断',
-            'usage': '1) 关注趋势：EPS的增长趋势比绝对值更重要；2) 结合PE：EPS与PE结合可以判断估值；3) 对比预测：实际EPS与预测EPS对比判断业绩'
-        },
-        'revenue': {
-            'name': '营收 Revenue',
-            'description': '营收是公司销售产品或提供服务获得的收入，反映公司的经营规模',
-            'calculation': '营收 = 销售产品或服务的总收入',
-            'reference_range': {
-                '增长': '营收持续增长表示业务扩张',
-                '稳定': '营收稳定表示业务稳定',
-                '下降': '营收下降表示业务收缩'
-            },
-            'interpretation': '营收反映公司的经营规模。营收增长表示业务扩张，营收下降表示业务收缩。需要结合利润率和行业对比来判断',
-            'usage': '1) 关注趋势：营收的增长趋势很重要；2) 结合利润率：高营收不一定意味着高利润；3) 对比行业：营收增长需要对比行业平均水平'
-        },
-        'profit_margin': {
-            'name': '利润率 Profit Margin',
-            'description': '利润率是净利润与营收的比率，反映公司的盈利质量',
-            'calculation': '利润率 = 净利润 / 营收 × 100%',
-            'reference_range': {
-                '高': '利润率 > 20%，盈利质量高',
-                '中': '利润率 10-20%，盈利质量中等',
-                '低': '利润率 < 10%，盈利质量低'
-            },
-            'interpretation': '利润率反映公司的盈利质量。高利润率表示公司能够将更多营收转化为利润。需要结合行业和成本结构来判断',
-            'usage': '1) 结合行业：不同行业的利润率水平不同；2) 关注趋势：利润率的趋势很重要；3) 对比毛利率：利润率与毛利率对比判断成本控制'
-        },
-        'target_price': {
-            'name': '目标价 Target Price',
-            'description': '目标价是分析师预测的股票未来价格，反映市场对公司未来的预期',
-            'calculation': '目标价基于财务模型和估值方法计算',
-            'reference_range': {
-                '上涨空间': '目标价 > 当前价，有上涨空间',
-                '下跌风险': '目标价 < 当前价，有下跌风险'
-            },
-            'interpretation': '目标价反映市场对公司未来的预期。目标价高于当前价表示分析师看好，低于当前价表示分析师看空。需要结合多个分析师的目标价来判断',
-            'usage': '1) 关注共识：多个分析师的目标价共识更有参考价值；2) 结合评级：目标价与评级结合判断；3) 关注更新：目标价会随业绩更新'
-        }
-    }
+    # 从JSON文件加载技术指标的解释和参考范围
+    indicator_info = _load_indicator_info()
+    
+    if not indicator_info:
+        return jsonify({
+            'success': False,
+            'message': '指标信息文件加载失败'
+        }), 500
     
     # 如果指定了指标名称，只返回该指标信息
     if indicator_name:
@@ -2723,16 +2354,12 @@ def main():
     """
     启动API服务
     """
-    global gateway
     import os
     
     # 初始化数据库
     init_database()
     
-    # 初始化yfinance网关
-    logger.info("初始化YFinance数据网关...")
-    gateway = YFinanceGateway()
-    logger.info("✅ YFinance网关初始化成功")
+    logger.info("✅ YFinance 数据服务就绪")
     
     port = 8080
     logger.info(f"🚀 API服务启动在 http://0.0.0.0:{port}")

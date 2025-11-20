@@ -134,7 +134,7 @@ export interface Indicators {
   pivot_s1?: number;
   pivot_s2?: number;
   pivot_s3?: number;
-  fundamental_data?: any;
+  fundamental_data?: FundamentalData;
   // 缠论分析（优化版）
   fractals?: {
     top_fractals: Array<{
@@ -264,6 +264,129 @@ export interface IndicatorInfo {
   reference_range: Record<string, string>;
   interpretation: string;
   usage: string;
+}
+
+/**
+ * 基本面数据 - 详细类型定义
+ */
+export interface FundamentalData {
+  // 基本信息
+  CompanyName?: string;
+  Exchange?: string;
+  Employees?: number;
+  SharesOutstanding?: number;
+  
+  // 市值与价格
+  MarketCap?: number;
+  Price?: number;
+  '52WeekHigh'?: number;
+  '52WeekLow'?: number;
+  
+  // 财务指标
+  RevenueTTM?: number;
+  NetIncomeTTM?: number;
+  EBITDATTM?: number;
+  ProfitMargin?: number;
+  GrossMargin?: number;
+  OperatingMargin?: number;
+  
+  // 每股数据
+  EPS?: number;
+  ForwardEPS?: number;
+  BookValuePerShare?: number;
+  CashPerShare?: number;
+  DividendPerShare?: number;
+  
+  // 估值指标
+  PE?: number;
+  ForwardPE?: number;
+  PriceToBook?: number;
+  ROE?: number;
+  ROA?: number;
+  ROIC?: number;
+  
+  // 分析师预测
+  TargetPrice?: number;
+  TargetHighPrice?: number;
+  TargetLowPrice?: number;
+  ConsensusRecommendation?: number | string;
+  RecommendationKey?: string;
+  NumberOfAnalystOpinions?: number;
+  ProjectedEPS?: number;
+  ProjectedGrowthRate?: number;
+  
+  // 详细财务报表（新增）
+  Financials?: FinancialRecord[];  // 年度财务报表
+  QuarterlyFinancials?: FinancialRecord[];  // 季度财务报表
+  BalanceSheet?: BalanceSheetRecord[];  // 年度资产负债表
+  QuarterlyBalanceSheet?: BalanceSheetRecord[];  // 季度资产负债表
+  Cashflow?: CashflowRecord[];  // 年度现金流量表
+  QuarterlyCashflow?: CashflowRecord[];  // 季度现金流量表
+  
+  // 持有人信息
+  MajorHolders?: HolderRecord[];
+  InstitutionalHolders?: InstitutionalHolderRecord[];
+  
+  // 历史数据
+  DividendHistory?: Record<string, number>;  // 日期 -> 股息金额
+  StockSplits?: Record<string, number>;  // 日期 -> 分割比例
+  
+  // 其他字段
+  [key: string]: any;
+}
+
+/**
+ * 财务报表记录
+ */
+export interface FinancialRecord {
+  index?: string;
+  Date?: string;
+  [key: string]: any;  // 动态字段，如 TotalRevenue, NetIncome 等
+}
+
+/**
+ * 资产负债表记录
+ */
+export interface BalanceSheetRecord {
+  index?: string;
+  Date?: string;
+  [key: string]: any;  // 动态字段，如 TotalAssets, TotalLiab 等
+}
+
+/**
+ * 现金流量表记录
+ */
+export interface CashflowRecord {
+  index?: string;
+  Date?: string;
+  [key: string]: any;  // 动态字段，如 OperatingCashFlow, CapitalExpenditure 等
+}
+
+/**
+ * 持有人记录
+ */
+export interface HolderRecord {
+  Holder?: string;
+  Name?: string;
+  Shares?: number | string;
+  Value?: number | string;
+  '% Out'?: number | string;
+  Percent?: number | string;
+  [key: string]: any;
+}
+
+/**
+ * 机构持有人记录
+ */
+export interface InstitutionalHolderRecord {
+  Holder?: string;
+  Name?: string;
+  Shares?: number | string;
+  Value?: number | string;
+  '% Out'?: number | string;
+  Percent?: number | string;
+  DateReported?: string;
+  [key: string]: any;
 }
 
 /**

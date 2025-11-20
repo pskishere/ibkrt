@@ -1,6 +1,6 @@
-# SchwabGo - 美股实盘交易系统
+# SchwabGo - 美股数据分析系统
 
-基于 Interactive Brokers (IB) API 的美股实盘交易系统，提供技术分析、智能交易信号和 AI 分析功能。
+基于 yfinance 的美股数据分析系统，提供技术分析、基本面分析和 AI 分析功能。
 
 ## 功能特性
 
@@ -25,20 +25,22 @@
 - 综合技术分析和基本面分析
 - 提供交易建议和风险评估
 
-### 💼 交易功能
-- 实时持仓查询
-- 市价/限价订单
-- 订单管理和撤单
-- 账户信息查询
+### 💰 基本面分析
+- 财务报表（年度/季度）
+- 资产负债表
+- 现金流量表
+- 估值指标（PE、PB、ROE等）
+- 分析师预测
 
 ## 技术栈
 
 ### 后端
 - Python 3.x
 - Flask (RESTful API)
-- IBAPI (Interactive Brokers API)
-- NumPy (技术指标计算)
+- yfinance (股票数据获取)
+- NumPy, Pandas (数据处理和指标计算)
 - SQLite (数据缓存)
+- Ollama (AI 分析，可选)
 
 ### 前端
 - React 18 + TypeScript
@@ -69,6 +71,7 @@ schwabgo/
 ├── go.py               # 主服务程序
 ├── cli.py              # 命令行工具
 ├── requirements.txt    # Python 依赖
+├── indicator_info.json # 技术指标说明配置
 └── stock_cache.db      # SQLite 缓存数据库
 ```
 
@@ -94,14 +97,7 @@ cd web
 npm install
 ```
 
-### 3. 配置 IB Gateway/TWS
-
-1. 下载并安装 IB Gateway 或 Trader Workstation (TWS)
-2. 启用 API 连接（配置 → API → 启用 ActiveX 和 Socket 客户端）
-3. 设置可信 IP（默认 127.0.0.1）
-4. 配置端口（默认 7497 实盘，7496 模拟盘）
-
-### 4. 配置 Ollama（可选）
+### 3. 配置 Ollama（可选，用于 AI 分析）
 
 ```bash
 # 安装 Ollama
@@ -121,11 +117,8 @@ ollama pull qwen2.5:32b-instruct-q4_K_M
 # 激活虚拟环境
 source .venv/bin/activate
 
-# 启动服务（默认端口 5001）
+# 启动服务（默认端口 8080）
 python go.py
-
-# 或指定端口
-python go.py --port 5002
 ```
 
 ### 启动前端
@@ -140,23 +133,11 @@ npm run dev
 ### 命令行工具
 
 ```bash
-# 查询持仓
-python cli.py positions
-
 # 技术分析
 python cli.py analyze AAPL
 
 # AI 分析
 python cli.py ai-analyze NVDA --model deepseek-v3.1:671b-cloud
-
-# 买入股票
-python cli.py buy TSLA 10
-
-# 卖出股票
-python cli.py sell TSLA 5
-
-# 查询订单
-python cli.py orders
 ```
 
 ## API 文档
@@ -170,24 +151,20 @@ GET /api/analyze/<symbol>
   - model: AI模型 (默认 'deepseek-v3.1:671b-cloud')
 ```
 
-### 持仓查询
+### 刷新分析（强制重新获取数据）
 ```
-GET /api/positions
-```
-
-### 下单
-```
-POST /api/orders/buy
-POST /api/orders/sell
-Body:
-  - symbol: 股票代码
-  - quantity: 数量
-  - price: 价格 (可选，不填为市价单)
+POST /api/refresh-analyze/<symbol>
+参数:
+  - duration: 数据周期 (默认 '3 M')
+  - bar_size: K线周期 (默认 '1 day')
+  - model: AI模型 (默认 'deepseek-v3.1:671b-cloud')
 ```
 
-### 撤单
+### 获取技术指标说明
 ```
-DELETE /api/orders/<order_id>
+GET /api/indicator-info
+参数:
+  - indicator: 指标名称（可选），不提供则返回所有指标信息
 ```
 
 更多 API 详情请查看源代码。
@@ -228,19 +205,42 @@ DELETE /api/orders/<order_id>
 - 建议先在模拟盘测试
 
 ⚠️ **数据说明**
+- 数据来源：Yahoo Finance (yfinance)
 - 技术指标基于历史数据计算
 - AI分析仅供参考，不构成投资建议
-- 实时数据依赖 IB API 连接
-- 缓存有效期为当天
+- 数据缓存有效期为当天
+- 支持增量更新，提高查询效率
+
+## Docker 部署
+
+### 使用 Docker Compose
+
+```bash
+# 启动所有服务
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f
+
+# 停止服务
+docker-compose down
+```
+
+服务将在 http://localhost:8086 访问
+
+### 环境变量配置
+
+- `OLLAMA_HOST`: Ollama 服务地址（可选，默认 http://localhost:11434）
+  - 如果 Ollama 运行在宿主机，使用 `http://host.docker.internal:11434`
+  - 如果 Ollama 运行在 Docker 中，使用容器网络地址
 
 ## 开发计划
 
 - [ ] 支持更多技术指标
 - [ ] 策略回测功能
-- [ ] 实时行情推送
-- [ ] 多账户管理
+- [ ] 更多基本面数据展示
 - [ ] 移动端 App
-- [ ] 自动交易策略
+- [ ] 数据导出功能
 
 ## 许可证
 

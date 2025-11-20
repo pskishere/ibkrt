@@ -6,14 +6,12 @@ services:
       dockerfile: Dockerfile.backend
     container_name: schwabgo-backend
     environment:
-      # IBKR连接配置 - 使用宿主机网络
-      - IB_GATEWAY_HOST=host.docker.internal
-      - IB_GATEWAY_PORT=7496
-      # Ollama服务配置 - 使用宿主机网络
+      # Ollama服务配置 - 使用宿主机网络（可选，如果使用Ollama AI分析）
       - OLLAMA_HOST=http://host.docker.internal:11434
     volumes:
       - ./stock_cache.db:/app/stock_cache.db
       - ./indicators:/app/indicators
+      - ./indicator_info.json:/app/indicator_info.json
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"

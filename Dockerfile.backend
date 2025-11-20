@@ -24,6 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制应用代码
 COPY go.py .
 COPY indicators/ ./indicators/
+COPY indicator_info.json .
 
 # 创建数据库目录
 RUN mkdir -p /app/data
