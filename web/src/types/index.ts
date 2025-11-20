@@ -99,6 +99,28 @@ export interface Indicators {
   sar_distance_pct?: number;
   sar_af?: number;
   sar_ep?: number;
+  // Ichimoku Cloud
+  ichimoku_tenkan_sen?: number;
+  ichimoku_kijun_sen?: number;
+  ichimoku_senkou_span_a?: number;
+  ichimoku_senkou_span_b?: number;
+  ichimoku_chikou_span?: number;
+  ichimoku_status?: string;
+  ichimoku_tk_cross?: string;
+  ichimoku_cloud_top?: number;
+  ichimoku_cloud_bottom?: number;
+  // SuperTrend
+  supertrend?: number;
+  supertrend_direction?: string; // 'up' | 'down'
+  // StochRSI
+  stoch_rsi_k?: number;
+  stoch_rsi_d?: number;
+  stoch_rsi_status?: string; // 'oversold' | 'overbought' | 'neutral'
+  // Volume Profile
+  vp_poc?: number;
+  vp_vah?: number;
+  vp_val?: number;
+  vp_status?: string; // 'above_va' | 'below_va' | 'inside_va'
   // 其他指标
   volatility_20?: number;
   volume_ratio?: number;

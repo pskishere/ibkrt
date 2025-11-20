@@ -516,6 +516,16 @@ class TradingCLI:
                             print()
                     elif period == 50 and data_points < 50:
                         print(f"   MA50: ❌ 数据不足(需50天,当前{data_points}天)")
+
+            # 指数移动平均线 (EMA)
+            if any(k in indicators for k in ['ema12', 'ema26', 'ema50']):
+                print(f"   EMA: ", end="")
+                ema_parts = []
+                for period in [12, 26, 50]:
+                    key = f'ema{period}'
+                    if key in indicators:
+                        ema_parts.append(f"EMA{period}=${indicators[key]:.2f}")
+                print(" | ".join(ema_parts))
             
             # RSI
             if 'rsi' in indicators:
@@ -697,6 +707,76 @@ class TradingCLI:
                     sar_status = "⚪中性"
                 
                 print(f"🎯 SAR(抛物线止损): ${sar:.2f} {sar_status} [需10天数据]")
+            
+            # SuperTrend
+            if 'supertrend' in indicators:
+                st = indicators['supertrend']
+                st_dir = indicators.get('supertrend_direction', 'up')
+                
+                if st_dir == 'up':
+                    st_status = "🟢看涨支撑"
+                else:
+                    st_status = "🔴看跌阻力"
+                
+                print(f"🚀 SuperTrend: ${st:.2f} {st_status} [需11天数据]")
+            
+            # StochRSI
+            if 'stoch_rsi_k' in indicators:
+                k = indicators['stoch_rsi_k']
+                d = indicators['stoch_rsi_d']
+                status = indicators.get('stoch_rsi_status', 'neutral')
+                
+                if status == 'oversold':
+                    stoch_desc = "🟢超卖"
+                elif status == 'overbought':
+                    stoch_desc = "🔴超买"
+                else:
+                    stoch_desc = "⚪中性"
+                    
+                print(f"📊 StochRSI: K={k:.1f} D={d:.1f} {stoch_desc}")
+                
+            # Volume Profile
+            if 'vp_poc' in indicators:
+                poc = indicators['vp_poc']
+                vah = indicators.get('vp_vah', 0)
+                val = indicators.get('vp_val', 0)
+                status = indicators.get('vp_status', 'inside_va')
+                
+                if status == 'above_va':
+                    vp_desc = "📈上方失衡(看涨)"
+                elif status == 'below_va':
+                    vp_desc = "📉下方失衡(看跌)"
+                else:
+                    vp_desc = "⚖️价值区平衡"
+                    
+                print(f"🧱 筹码分布: POC=${poc:.2f} [{val:.2f} - {vah:.2f}] {vp_desc}")
+            
+            # Ichimoku Cloud
+            if 'ichimoku_tenkan_sen' in indicators:
+                tenkan = indicators['ichimoku_tenkan_sen']
+                kijun = indicators['ichimoku_kijun_sen']
+                span_a = indicators['ichimoku_senkou_span_a']
+                span_b = indicators['ichimoku_senkou_span_b']
+                status = indicators.get('ichimoku_status', 'inside_cloud')
+                
+                if status == 'above_cloud':
+                    cloud_desc = "☁️云上(看涨)"
+                elif status == 'below_cloud':
+                    cloud_desc = "🌧️云下(看跌)"
+                else:
+                    cloud_desc = "🌫️云中(盘整)"
+                    
+                tk_cross = indicators.get('ichimoku_tk_cross', 'neutral')
+                if tk_cross == 'bullish':
+                    cross_desc = "➕金叉"
+                elif tk_cross == 'bearish':
+                    cross_desc = "➖死叉"
+                else:
+                    cross_desc = ""
+                
+                print(f"☁️ 一目均衡表: {cloud_desc} {cross_desc}")
+                print(f"   转折线: ${tenkan:.2f} | 基准线: ${kijun:.2f}")
+                print(f"   云层: ${min(span_a, span_b):.2f} - ${max(span_a, span_b):.2f}")
             
             # OBV趋势
             if 'obv_trend' in indicators:

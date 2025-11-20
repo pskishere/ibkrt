@@ -32,7 +32,9 @@ from indicators import (
     calculate_support_resistance, calculate_kdj, calculate_atr,
     calculate_williams_r, calculate_obv, analyze_trend_strength,
     calculate_fibonacci_retracement, calculate_chanlun_analysis, get_trend,
-    calculate_cci, calculate_adx, calculate_vwap, calculate_sar
+    calculate_cci, calculate_adx, calculate_vwap, calculate_sar,
+    calculate_supertrend, calculate_stoch_rsi, calculate_volume_profile,
+    calculate_ichimoku
 )
 
 # 配置日志
@@ -1230,6 +1232,26 @@ class IBGateway(EWrapper, EClient):
             sar_data = calculate_sar(closes, highs, lows)
             result.update(sar_data)
 
+        # 21. SuperTrend (超级趋势)
+        if len(closes) >= 11:
+            st_data = calculate_supertrend(closes, highs, lows)
+            result.update(st_data)
+            
+        # 22. StochRSI (随机相对强弱指标)
+        if len(closes) >= 28:
+            stoch_rsi_data = calculate_stoch_rsi(closes)
+            result.update(stoch_rsi_data)
+            
+        # 23. Volume Profile (成交量分布)
+        if len(closes) >= 20:
+            vp_data = calculate_volume_profile(closes, highs, lows, volumes)
+            result.update(vp_data)
+
+        # 24. Ichimoku Cloud (一目均衡表)
+        if len(closes) >= 52:
+            ichimoku_data = calculate_ichimoku(closes, highs, lows)
+            result.update(ichimoku_data)
+
         # 20. IBKR基本面数据
         try:
             fundamental_data = self.get_fundamental_data(symbol, 'ReportSnapshot')
@@ -1556,6 +1578,59 @@ class IBGateway(EWrapper, EClient):
                 else:
                     signals['signals'].append(f'⚠️ SAR=${sar:.2f}({sar_distance:.1f}%) 转向看跌 - 关键卖出信号')
                     signals['score'] -= 20
+        
+        # 18. SuperTrend信号
+        if 'supertrend' in indicators:
+            st = indicators['supertrend']
+            st_dir = indicators.get('supertrend_direction', 'up')
+            current_price = indicators.get('current_price', 0)
+            
+            if st_dir == 'up':
+                if current_price > st:
+                    signals['signals'].append(f'🟢 SuperTrend支撑(${st:.2f}) - 趋势看涨')
+                    signals['score'] += 20
+            else:
+                if current_price < st:
+                    signals['signals'].append(f'🔴 SuperTrend阻力(${st:.2f}) - 趋势看跌')
+                    signals['score'] -= 20
+                    
+        # 19. StochRSI信号
+        if 'stoch_rsi_k' in indicators and 'stoch_rsi_d' in indicators:
+            k = indicators['stoch_rsi_k']
+            d = indicators['stoch_rsi_d']
+            status = indicators.get('stoch_rsi_status', 'neutral')
+            
+            if status == 'oversold':
+                if k > d: # 金叉
+                    signals['signals'].append(f'🚀 StochRSI超卖金叉(K={k:.1f}) - 强烈反弹信号')
+                    signals['score'] += 18
+                else:
+                    signals['signals'].append(f'🟢 StochRSI超卖(K={k:.1f}) - 等待反弹')
+                    signals['score'] += 10
+            elif status == 'overbought':
+                if k < d: # 死叉
+                    signals['signals'].append(f'⚠️ StochRSI超买死叉(K={k:.1f}) - 回调风险大')
+                    signals['score'] -= 18
+                else:
+                    signals['signals'].append(f'🔴 StochRSI超买(K={k:.1f}) - 警惕回调')
+                    signals['score'] -= 10
+                    
+        # 20. Volume Profile信号
+        if 'vp_poc' in indicators:
+            poc = indicators['vp_poc']
+            current_price = indicators.get('current_price', 0)
+            vp_status = indicators.get('vp_status', 'inside_va')
+            
+            dist_pct = (current_price - poc) / poc * 100
+            
+            if abs(dist_pct) < 0.5:
+                signals['signals'].append(f'⚖️ 价格在POC(${poc:.2f})附近 - 筹码密集区平衡')
+            elif vp_status == 'above_va':
+                signals['signals'].append(f'📈 价格在价值区域上方(POC ${poc:.2f}) - 强势失衡')
+                signals['score'] += 12
+            elif vp_status == 'below_va':
+                signals['signals'].append(f'📉 价格在价值区域下方(POC ${poc:.2f}) - 弱势失衡')
+                signals['score'] -= 12
                 
         # 综合建议
         score = signals['score']
@@ -2484,6 +2559,25 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
      * 50.0%: ${indicators.get('fib_50.0', 0):.2f}
      * 61.8%: ${indicators.get('fib_61.8', 0):.2f}
      * 78.6%: ${indicators.get('fib_78.6', 0):.2f}
+   - 一目均衡表 (Ichimoku Cloud):
+     * 转折线 (Tenkan): ${indicators.get('ichimoku_tenkan_sen', 0):.2f}
+     * 基准线 (Kijun): ${indicators.get('ichimoku_kijun_sen', 0):.2f}
+     * 云层上沿: ${indicators.get('ichimoku_cloud_top', 0):.2f}
+     * 云层下沿: ${indicators.get('ichimoku_cloud_bottom', 0):.2f}
+     * 状态: {indicators.get('ichimoku_status', 'unknown')}
+     * 交叉信号: {indicators.get('ichimoku_tk_cross', 'neutral')}
+   - SuperTrend:
+     * 价格: ${indicators.get('supertrend', 0):.2f}
+     * 方向: {indicators.get('supertrend_direction', 'neutral')}
+   - StochRSI:
+     * K: {indicators.get('stoch_rsi_k', 0):.1f}
+     * D: {indicators.get('stoch_rsi_d', 0):.1f}
+     * 状态: {indicators.get('stoch_rsi_status', 'neutral')}
+   - 筹码分布 (Volume Profile):
+     * POC (控制点): ${indicators.get('vp_poc', 0):.2f}
+     * 价值区上沿 (VAH): ${indicators.get('vp_vah', 0):.2f}
+     * 价值区下沿 (VAL): ${indicators.get('vp_val', 0):.2f}
+     * 状态: {indicators.get('vp_status', 'neutral')}
 
 8. 风险评估:
    - 风险等级: {signals.get('risk', {}).get('level', 'unknown') if signals.get('risk') else 'unknown'}
@@ -2562,6 +2656,13 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
      * 50.0%: ${indicators.get('fib_50.0', 0):.2f}
      * 61.8%: ${indicators.get('fib_61.8', 0):.2f}
      * 78.6%: ${indicators.get('fib_78.6', 0):.2f}
+   - 一目均衡表 (Ichimoku Cloud):
+     * 转折线 (Tenkan): ${indicators.get('ichimoku_tenkan_sen', 0):.2f}
+     * 基准线 (Kijun): ${indicators.get('ichimoku_kijun_sen', 0):.2f}
+     * 云层上沿: ${indicators.get('ichimoku_cloud_top', 0):.2f}
+     * 云层下沿: ${indicators.get('ichimoku_cloud_bottom', 0):.2f}
+     * 状态: {indicators.get('ichimoku_status', 'unknown')}
+     * 交叉信号: {indicators.get('ichimoku_tk_cross', 'neutral')}
 
 8. 风险评估:
    - 风险等级: {signals.get('risk', {}).get('level', 'unknown') if signals.get('risk') else 'unknown'}
@@ -2979,6 +3080,55 @@ def get_indicator_info():
             },
             'interpretation': 'SAR是一种简单有效的趋势跟随工具。SAR在价格下方表示上升趋势，在价格上方表示下降趋势。SAR点位可以直接用作止损位。当价格突破SAR时，趋势发生反转，SAR也从一侧跳到另一侧。SAR在趋势市中非常有效，但在震荡市中可能产生较多假信号',
             'usage': '1) SAR在价格下方时持有多头，以SAR为止损位；2) SAR在价格上方时持有空头或空仓，以SAR为止损位；3) SAR翻转时进行反向操作：从SAR下方转到上方则平多开空，从SAR上方转到下方则平空开多；4) 结合ADX使用，当ADX > 25时SAR信号更可靠；5) 震荡市中谨慎使用，可能产生频繁的假信号'
+        },
+        'ichimoku': {
+            'name': '一目均衡表 Ichimoku Cloud',
+            'description': '一目均衡表是一个综合性的技术指标，用于判断市场趋势、支撑阻力位以及买卖信号',
+            'calculation': '包含五条线：转折线(Tenkan-sen)、基准线(Kijun-sen)、先行带A(Senkou Span A)、先行带B(Senkou Span B)和迟行带(Chikou Span)',
+            'reference_range': {
+                '云层': '先行带A和B之间的区域称为"云"。价格在云上为看涨，云下为看跌，云中为盘整',
+                '金叉': '转折线上穿基准线，视为买入信号',
+                '死叉': '转折线下穿基准线，视为卖出信号',
+                '迟行带': '迟行带在价格上方确认看涨，下方确认看跌'
+            },
+            'interpretation': '一目均衡表提供了全面的市场视图。云层厚度代表支撑/阻力的强度。价格突破云层通常是强烈的趋势信号',
+            'usage': '1) 观察价格与云层的关系判断大趋势；2) 关注转折线与基准线的交叉作为交易信号；3) 使用迟行带确认趋势强度'
+        },
+        'supertrend': {
+            'name': 'SuperTrend 超级趋势',
+            'description': 'SuperTrend是一个趋势跟踪指标，类似于移动平均线，但结合了ATR来过滤噪音',
+            'calculation': '基于ATR和中位数价格计算上下轨，价格突破轨道则趋势反转',
+            'reference_range': {
+                '看涨': '价格在SuperTrend线上方，显示绿色，作为支撑位',
+                '看跌': '价格在SuperTrend线下方，显示红色，作为阻力位'
+            },
+            'interpretation': 'SuperTrend是非常直观的趋势指标。绿色表示看涨，红色表示看跌。线的变色点是买卖信号',
+            'usage': '1) 趋势跟随：绿色做多，红色做空；2) 止损位：SuperTrend线本身就是极佳的移动止损位'
+        },
+        'stoch_rsi': {
+            'name': 'StochRSI 随机相对强弱指数',
+            'description': 'StochRSI是将随机指标(Stochastic)应用于RSI指标，用于提高RSI的灵敏度',
+            'calculation': 'StochRSI = (RSI - MinRSI) / (MaxRSI - MinRSI)',
+            'reference_range': {
+                '超卖': '<0.2 (或20) 超卖区域，可能反弹',
+                '超买': '>0.8 (或80) 超买区域，可能回调',
+                '中性': '0.2-0.8 正常波动'
+            },
+            'interpretation': 'StochRSI比普通RSI更灵敏，能更快捕捉短期的超买超卖。但也更容易产生假信号',
+            'usage': '1) 寻找极端值：>0.8卖出，<0.2买入；2) 结合趋势：上升趋势中关注超卖买入机会'
+        },
+        'volume_profile': {
+            'name': 'Volume Profile 筹码分布',
+            'description': '筹码分布显示特定时间段内不同价格水平的成交量，用于识别关键的支撑和阻力位',
+            'calculation': '统计每个价格区间的成交量，计算POC(控制点)、VAH(价值区上沿)、VAL(价值区下沿)',
+            'reference_range': {
+                'POC': 'Point of Control，成交量最大的价格水平，是最强的引力点',
+                'VA': 'Value Area，包含70%成交量的价格区间',
+                '上方失衡': '价格在价值区上方，可能回调或继续上涨',
+                '下方失衡': '价格在价值区下方，可能反弹或继续下跌'
+            },
+            'interpretation': 'POC是市场公认的公平价格，价格常围绕POC波动。VAH和VAL是重要的支撑阻力位',
+            'usage': '1) 价格回调至POC或VA边缘时寻找反弹机会；2) 价格突破VA通常意味着新的趋势开始'
         },
         'atr': {
             'name': 'ATR 平均真实波幅',
