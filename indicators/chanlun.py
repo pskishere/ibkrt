@@ -53,6 +53,8 @@ class MergedKBar:
     low: float
     direction: Direction
     original_count: int  # 包含的原始K线数量
+    total_volume: float = 0.0  # 合并K线的总成交量
+    avg_volume: float = 0.0  # 平均成交量
     
     def __repr__(self):
         return f"MergedK(idx={self.start_index}-{self.end_index}, H={self.high:.2f}, L={self.low:.2f}, dir={self.direction.value})"
@@ -66,6 +68,8 @@ class Fractal:
     price: float
     fractal_type: FractalType
     k_count: int  # 包含的原始K线数量
+    volume: float = 0.0  # 分型处的成交量
+    volume_confirmed: bool = False  # 是否得到成交量确认
     
     def __repr__(self):
         return f"{self.fractal_type.value}Fractal(idx={self.original_index}, price={self.price:.2f})"
@@ -80,6 +84,9 @@ class Stroke:
     k_count: int  # 包含的原始K线数量
     price_change: float
     price_change_pct: float
+    total_volume: float = 0.0  # 笔的总成交量
+    avg_volume: float = 0.0  # 笔的平均成交量
+    volume_strength: float = 0.0  # 成交量强度（相对于平均值的倍数）
     
     @property
     def start_index(self) -> int:
@@ -230,8 +237,8 @@ class ChanlunAnalyzer:
         else:
             volumes = np.zeros_like(closes)
         
-        # 检查缓存
-        data_hash = hash((closes.tobytes(), highs.tobytes(), lows.tobytes()))
+        # 检查缓存（包含成交量数据）
+        data_hash = hash((closes.tobytes(), highs.tobytes(), lows.tobytes(), volumes.tobytes()))
         if self._last_data_hash == data_hash:
             return self._cache
         
@@ -285,6 +292,7 @@ class ChanlunAnalyzer:
         }
         
         # 转换为可序列化格式（用于API返回）
+        # 注意：这里暂时不传入时间，时间信息将在外部添加
         result['serializable'] = self._to_serializable(result)
         
         # 更新缓存
@@ -306,8 +314,8 @@ class ChanlunAnalyzer:
         - 下降过程：取高点的较低值，低点的较低值
         """
         if len(k_bars) < 2:
-            return [MergedKBar(k.index, k.index, k.high, k.low, Direction.UNKNOWN, 1) 
-                    for k in k_bars]
+            return [MergedKBar(k.index, k.index, k.high, k.low, Direction.UNKNOWN, 1, 
+                              k.volume, k.volume) for k in k_bars]
         
         merged: List[MergedKBar] = []
         direction = Direction.UNKNOWN
@@ -319,6 +327,8 @@ class ChanlunAnalyzer:
             high = current.high
             low = current.low
             count = 1
+            total_vol = current.volume
+            volumes_list = [current.volume]
             
             # 尝试合并后续K线
             j = i + 1
@@ -344,14 +354,19 @@ class ChanlunAnalyzer:
                         low = min(low, next_k.low)
                         direction = Direction.DOWN
                     count += 1
+                    total_vol += next_k.volume
+                    volumes_list.append(next_k.volume)
                     j += 1
                 else:
                     # 无包含关系，结束合并
                     break
             
+            # 计算平均成交量
+            avg_vol = np.mean(volumes_list) if volumes_list else 0.0
+            
             # 添加合并后的K线
             merged.append(MergedKBar(start_idx, k_bars[j-1].index if j > i else start_idx, 
-                                     high, low, direction, count))
+                                     high, low, direction, count, total_vol, avg_vol))
             
             # 更新方向（为下一次合并做准备）
             if j < len(k_bars):
@@ -370,11 +385,17 @@ class ChanlunAnalyzer:
         
         顶分型：中间K线的高点 > 左右K线的高点
         底分型：中间K线的低点 < 左右K线的低点
+        
+        成交量确认：分型处的成交量应该相对较大，表示市场参与度高
         """
         fractals: List[Fractal] = []
         
         if len(merged_k_bars) < 3:
             return fractals
+        
+        # 计算平均成交量（用于确认）
+        avg_volumes = [mb.avg_volume for mb in merged_k_bars if mb.avg_volume > 0]
+        overall_avg_volume = np.mean(avg_volumes) if avg_volumes else 0.0
         
         for i in range(1, len(merged_k_bars) - 1):
             prev = merged_k_bars[i - 1]
@@ -383,22 +404,32 @@ class ChanlunAnalyzer:
             
             # 顶分型
             if curr.high > prev.high and curr.high > next_k.high:
+                # 成交量确认：顶分型时成交量应该较大（表示抛压）
+                volume_confirmed = overall_avg_volume > 0 and curr.avg_volume >= overall_avg_volume * 0.8
+                
                 fractals.append(Fractal(
                     index=i,
-                    original_index=curr.end_index,  # 使用合并K线的结束索引
+                    original_index=curr.end_index,
                     price=curr.high,
                     fractal_type=FractalType.TOP,
-                    k_count=curr.original_count
+                    k_count=curr.original_count,
+                    volume=curr.total_volume,
+                    volume_confirmed=volume_confirmed
                 ))
             
             # 底分型
             if curr.low < prev.low and curr.low < next_k.low:
+                # 成交量确认：底分型时成交量应该较大（表示承接）
+                volume_confirmed = overall_avg_volume > 0 and curr.avg_volume >= overall_avg_volume * 0.8
+                
                 fractals.append(Fractal(
                     index=i,
                     original_index=curr.end_index,
                     price=curr.low,
                     fractal_type=FractalType.BOTTOM,
-                    k_count=curr.original_count
+                    k_count=curr.original_count,
+                    volume=curr.total_volume,
+                    volume_confirmed=volume_confirmed
                 ))
         
         return fractals
@@ -448,16 +479,29 @@ class ChanlunAnalyzer:
                         if curr.price < prev.price:
                             valid_fractals[-1] = curr
         
+        # 计算整体平均成交量（用于计算成交量强度）
+        all_volumes = [mb.total_volume for mb in merged_k_bars if mb.total_volume > 0]
+        overall_avg_volume = np.mean(all_volumes) if all_volumes else 0.0
+        
         # 生成笔
         for i in range(len(valid_fractals) - 1):
             start = valid_fractals[i]
             end = valid_fractals[i + 1]
             
-            # 计算K线数量
+            # 计算K线数量和成交量
             k_count = 0
+            total_vol = 0.0
+            volumes_list = []
+            
             for j in range(start.index, end.index + 1):
                 if j < len(merged_k_bars):
                     k_count += merged_k_bars[j].original_count
+                    total_vol += merged_k_bars[j].total_volume
+                    if merged_k_bars[j].avg_volume > 0:
+                        volumes_list.append(merged_k_bars[j].avg_volume)
+            
+            avg_vol = np.mean(volumes_list) if volumes_list else 0.0
+            volume_strength = (avg_vol / overall_avg_volume) if overall_avg_volume > 0 else 0.0
             
             direction = Direction.UP if end.price > start.price else Direction.DOWN
             price_change = end.price - start.price
@@ -469,7 +513,10 @@ class ChanlunAnalyzer:
                 direction=direction,
                 k_count=k_count,
                 price_change=price_change,
-                price_change_pct=price_change_pct
+                price_change_pct=price_change_pct,
+                total_volume=total_vol,
+                avg_volume=avg_vol,
+                volume_strength=volume_strength
             ))
         
         return strokes
@@ -681,8 +728,9 @@ class ChanlunAnalyzer:
         
         背驰判断：
         - 价格创新高/新低，但MACD柱未创新高/新低
+        - 价量背离：价格上涨但成交量萎缩，或价格下跌但成交量放大
         """
-        if len(macd_data['macd']) == 0:
+        if len(macd_data.get('macd', [])) == 0:
             return False
         
         macd = macd_data['macd']
@@ -694,17 +742,34 @@ class ChanlunAnalyzer:
         if idx1 < 0 or idx2 < 0:
             return False
         
+        # MACD背驰判断
+        macd_divergence = False
+        
         # 向上笔的背驰：价格新高 but MACD未新高
         if stroke1.direction == Direction.UP and stroke2.direction == Direction.UP:
             if stroke2.end_price > stroke1.end_price and abs(macd[idx2]) < abs(macd[idx1]):
-                return True
+                macd_divergence = True
         
         # 向下笔的背驰：价格新低 but MACD未新低
         if stroke1.direction == Direction.DOWN and stroke2.direction == Direction.DOWN:
             if stroke2.end_price < stroke1.end_price and abs(macd[idx2]) < abs(macd[idx1]):
-                return True
+                macd_divergence = True
         
-        return False
+        # 价量背离判断
+        volume_divergence = False
+        if stroke1.avg_volume > 0 and stroke2.avg_volume > 0:
+            # 上涨价量背离：价格上涨但成交量萎缩
+            if stroke1.direction == Direction.UP and stroke2.direction == Direction.UP:
+                if stroke2.end_price > stroke1.end_price and stroke2.avg_volume < stroke1.avg_volume * 0.7:
+                    volume_divergence = True
+            
+            # 下跌价量背离：价格下跌但成交量放大（可能是恐慌性抛售）
+            if stroke1.direction == Direction.DOWN and stroke2.direction == Direction.DOWN:
+                if stroke2.end_price < stroke1.end_price and stroke2.avg_volume > stroke1.avg_volume * 1.5:
+                    volume_divergence = True
+        
+        # 背驰：MACD背驰或价量背离
+        return macd_divergence or volume_divergence
     
     def _identify_trading_points(self, segments: List[Segment], 
                                 central_banks: List[CentralBank],
@@ -939,8 +1004,20 @@ class ChanlunAnalyzer:
             'recommendation': recommendation
         }
     
-    def _to_serializable(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """转换为可序列化的格式（用于API返回）"""
+    def _to_serializable(self, result: Dict[str, Any], times: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        转换为可序列化的格式（用于API返回）
+        
+        Args:
+            result: 分析结果
+            times: 时间数组（可选），用于将index转换为时间
+        """
+        # 辅助函数：根据index获取时间
+        def get_time_by_index(index: int) -> Optional[str]:
+            if times and 0 <= index < len(times):
+                return times[index]
+            return None
+        
         return {
             'fractals': {
                 'top_fractals': [
@@ -991,6 +1068,8 @@ class ChanlunAnalyzer:
                 {
                     'start_index': cb.start_index,
                     'end_index': cb.end_index,
+                    'start_time': get_time_by_index(cb.start_index),
+                    'end_time': get_time_by_index(cb.end_index),
                     'high': float(cb.high),
                     'low': float(cb.low),
                     'center': float(cb.center),
@@ -1006,6 +1085,7 @@ class ChanlunAnalyzer:
                     {
                         'type': bp.point_type,
                         'index': bp.index,
+                        'time': get_time_by_index(bp.index),
                         'price': float(bp.price),
                         'description': bp.description,
                         'confidence': float(bp.confidence),
@@ -1017,6 +1097,7 @@ class ChanlunAnalyzer:
                     {
                         'type': sp.point_type,
                         'index': sp.index,
+                        'time': get_time_by_index(sp.index),
                         'price': float(sp.price),
                         'description': sp.description,
                         'confidence': float(sp.confidence),
@@ -1069,7 +1150,7 @@ class ChanlunAnalyzer:
 
 
 # 兼容旧接口的包装函数
-def calculate_chanlun_analysis(closes, highs, lows, volumes=None):
+def calculate_chanlun_analysis(closes, highs, lows, volumes=None, times=None):
     """
     兼容旧接口的缠论分析函数
     
@@ -1078,6 +1159,7 @@ def calculate_chanlun_analysis(closes, highs, lows, volumes=None):
         highs: 最高价列表或数组
         lows: 最低价列表或数组
         volumes: 成交量列表或数组（可选）
+        times: 时间列表或数组（可选），用于为买卖点和中枢添加时间信息
     
     Returns:
         包含缠论分析结果的字典（可序列化格式）
@@ -1090,8 +1172,12 @@ def calculate_chanlun_analysis(closes, highs, lows, volumes=None):
         volumes=np.array(volumes) if volumes is not None else None
     )
     
-    # 返回可序列化的结果 + 一些额外的兼容字段
-    serializable = result['serializable']
+    # 转换为可序列化格式，传入时间信息
+    if times is not None:
+        times_list = list(times) if not isinstance(times, list) else times
+        serializable = analyzer._to_serializable(result, times=times_list)
+    else:
+        serializable = result['serializable']
     
     # 添加旧接口期望的字段
     serializable['fractal_count'] = serializable['current_status'].get('counts', {}).get('fractals', {})

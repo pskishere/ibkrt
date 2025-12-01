@@ -2428,6 +2428,11 @@ const MainPage: React.FC = () => {
                                               pivot: `中枢${index + 1}`,
                                               position,
                                               positionColor,
+                                              timeRange: cb.start_time && cb.end_time 
+                                                ? `${cb.start_time} ~ ${cb.end_time}`
+                                                : cb.start_index !== undefined && cb.end_index !== undefined
+                                                ? `索引 ${cb.start_index} ~ ${cb.end_index}`
+                                                : '-',
                                               priceRange: `$${formatValue(cb.low)} - $${formatValue(cb.high)}`,
                                               width: `${formatValue(cb.width_pct)}%`,
                                               type: `${cb.segment_count}段${typeLabel}`,
@@ -2439,6 +2444,12 @@ const MainPage: React.FC = () => {
                                               dataIndex: 'pivot',
                                               key: 'pivot',
                                               width: 80,
+                                            },
+                                            {
+                                              title: '时间范围',
+                                              dataIndex: 'timeRange',
+                                              key: 'timeRange',
+                                              width: 200,
                                             },
                                             {
                                               title: '位置',
@@ -2484,6 +2495,7 @@ const MainPage: React.FC = () => {
                                             key: index,
                                             type: bp.type,
                                             hasDivergence: bp.has_divergence,
+                                            time: bp.time || (bp.index !== undefined ? `索引 ${bp.index}` : '-'),
                                             price: `$${formatValue(bp.price)}`,
                                             confidence: bp.confidence,
                                             description: bp.description,
@@ -2500,6 +2512,12 @@ const MainPage: React.FC = () => {
                                                   {record.hasDivergence && <Tag color="volcano">🔥 背驰</Tag>}
                                                 </Space>
                                               ),
+                                            },
+                                            {
+                                              title: '时间',
+                                              dataIndex: 'time',
+                                              key: 'time',
+                                              width: 150,
                                             },
                                             {
                                               title: '价格',
@@ -2543,6 +2561,7 @@ const MainPage: React.FC = () => {
                                             key: index,
                                             type: sp.type,
                                             hasDivergence: sp.has_divergence,
+                                            time: sp.time || (sp.index !== undefined ? `索引 ${sp.index}` : '-'),
                                             price: `$${formatValue(sp.price)}`,
                                             confidence: sp.confidence,
                                             description: sp.description,
@@ -2559,6 +2578,12 @@ const MainPage: React.FC = () => {
                                                   {record.hasDivergence && <Tag color="volcano">🔥 背驰</Tag>}
                                                 </Space>
                                               ),
+                                            },
+                                            {
+                                              title: '时间',
+                                              dataIndex: 'time',
+                                              key: 'time',
+                                              width: 150,
                                             },
                                             {
                                               title: '价格',

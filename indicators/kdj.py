@@ -1,55 +1,102 @@
 # -*- coding: utf-8 -*-
 """
 KDJ指标（随机指标）计算
+按照 Futu 公式实现
 """
 
 import numpy as np
 
 
-def calculate_kdj(closes, highs, lows, n=9, m1=3, m2=3):
+def calculate_kdj(closes, highs, lows, p1=9, p2=3, p3=3):
     """
     计算KDJ指标（随机指标）
-    n: RSV周期，默认9
-    m1: K值平滑周期，默认3
-    m2: D值平滑周期，默认3
+    
     标准公式：
-    K = 2/3 × K_prev + 1/3 × RSV
-    D = 2/3 × D_prev + 1/3 × K
-    J = 3 × K - 2 × D
+    RSV = (CLOSE - LLV(LOW, P1)) / (HHV(HIGH, P1) - LLV(LOW, P1)) * 100
+    K = EMA(RSV, P2) = (2/3) * 前一日K值 + (1/3) * 当日RSV
+    D = EMA(K, P3) = (2/3) * 前一日D值 + (1/3) * 当日K值
+    J = 3*K - 2*D
+    
+    注意：标准KDJ使用EMA（指数移动平均），不是SMA（简单移动平均）
+    EMA的平滑系数 = 2 / (周期 + 1)，对于周期3，系数 = 2/(3+1) = 0.5
+    但传统KDJ使用固定系数：K = (2/3)*前K + (1/3)*RSV，相当于周期3的EMA
+    
+    参数:
+        closes: 收盘价数组
+        highs: 最高价数组
+        lows: 最低价数组
+        p1: RSV 计算周期，默认9
+        p2: K 值平滑周期（EMA周期），默认3
+        p3: D 值平滑周期（EMA周期），默认3
+    
+    返回:
+        dict: 包含 kdj_k, kdj_d, kdj_j
     """
     result = {}
     
-    if len(closes) < n:
+    if len(closes) < p1:
         return result
     
-    # 计算RSV（未成熟随机值）
-    period = min(n, len(closes))
-    lowest_low = float(np.min(lows[-period:]))
-    highest_high = float(np.max(highs[-period:]))
+    # 计算 RSV 序列
+    rsv_list = []
+    for i in range(p1 - 1, len(closes)):
+        # LLV(LOW, P1) - 最近 P1 期的最低价
+        period_lows = lows[i - p1 + 1:i + 1]
+        # HHV(HIGH, P1) - 最近 P1 期的最高价
+        period_highs = highs[i - p1 + 1:i + 1]
+        
+        llv = np.min(period_lows)
+        hhv = np.max(period_highs)
+        
+        if hhv == llv:
+            rsv = 50.0
+        else:
+            # RSV = (CLOSE - LLV(LOW, P1)) / (HHV(HIGH, P1) - LLV(LOW, P1)) * 100
+            rsv = ((closes[i] - llv) / (hhv - llv)) * 100
+        rsv_list.append(rsv)
     
-    if highest_high == lowest_low:
-        rsv = 50.0
-    else:
-        rsv = ((closes[-1] - lowest_low) / (highest_high - lowest_low)) * 100
+    if len(rsv_list) == 0:
+        return result
     
-    # 使用标准平滑公式
-    # 如果没有历史值，初始化K=D=50
-    # 这里为简化，使用RSV作为初始值
-    k_prev = rsv  # 第一次计算时使用RSV作为初始值
-    d_prev = rsv
+    # 计算 K 序列 - 使用EMA（指数移动平均）
+    # 标准KDJ: K = (2/3) * 前一日K值 + (1/3) * 当日RSV
+    # 这相当于周期为3的EMA，平滑系数 = 1/3
+    k_list = []
+    alpha_k = 1.0 / p2  # EMA平滑系数
     
-    # K = (m1-1)/m1 × K_prev + 1/m1 × RSV
-    k = ((m1 - 1) / m1) * k_prev + (1 / m1) * rsv
+    for i in range(len(rsv_list)):
+        if i == 0:
+            # 初始值使用RSV
+            k = rsv_list[i]
+        else:
+            # EMA: K = (1-alpha) * 前K + alpha * 当前RSV
+            # 标准KDJ使用: K = (2/3) * 前K + (1/3) * RSV
+            k = (1 - alpha_k) * k_list[i - 1] + alpha_k * rsv_list[i]
+        k_list.append(k)
     
-    # D = (m2-1)/m2 × D_prev + 1/m2 × K
-    d = ((m2 - 1) / m2) * d_prev + (1 / m2) * k
+    # 计算 D 序列 - 使用EMA（指数移动平均）
+    # 标准KDJ: D = (2/3) * 前一日D值 + (1/3) * 当日K值
+    d_list = []
+    alpha_d = 1.0 / p3  # EMA平滑系数
     
-    # J = 3K - 2D
-    j = 3 * k - 2 * d
+    for i in range(len(k_list)):
+        if i == 0:
+            # 初始值使用K值
+            d = k_list[i]
+        else:
+            # EMA: D = (1-alpha) * 前D + alpha * 当前K
+            # 标准KDJ使用: D = (2/3) * 前D + (1/3) * K
+            d = (1 - alpha_d) * d_list[i - 1] + alpha_d * k_list[i]
+        d_list.append(d)
     
-    result['kdj_k'] = float(k)
-    result['kdj_d'] = float(d)
-    result['kdj_j'] = float(j)
+    # 计算 J = 3*K - 2*D
+    j_list = [3 * k - 2 * d for k, d in zip(k_list, d_list)]
+    
+    # 返回最新的 KDJ 值
+    if len(k_list) > 0 and len(d_list) > 0 and len(j_list) > 0:
+        result['kdj_k'] = float(k_list[-1])
+        result['kdj_d'] = float(d_list[-1])
+        result['kdj_j'] = float(j_list[-1])
     
     return result
 

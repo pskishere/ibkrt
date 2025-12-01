@@ -36,6 +36,7 @@ from indicators import (
     calculate_supertrend, calculate_stoch_rsi, calculate_volume_profile,
     calculate_ichimoku
 )
+from indicators.ml_predictions import calculate_ml_predictions
 
 # 配置日志
 logging.basicConfig(
@@ -544,8 +545,19 @@ def _save_kline_to_cache(symbol: str, interval: str, df: pd.DataFrame):
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             
+            # 检查是否有 Volume 列，如果没有或为 NaN 则使用 0
+            has_volume = 'Volume' in df.columns
+            
             for date, row in df.iterrows():
                 date_str = date.strftime('%Y-%m-%d')
+                # 处理成交量数据：如果不存在或为 NaN，使用 0
+                volume = 0
+                if has_volume and pd.notna(row.get('Volume')):
+                    try:
+                        volume = int(row['Volume'])
+                    except (ValueError, TypeError):
+                        volume = 0
+                
                 cursor.execute('''
                     INSERT OR REPLACE INTO kline_data 
                     (symbol, interval, date, open, high, low, close, volume, updated_at)
@@ -558,7 +570,7 @@ def _save_kline_to_cache(symbol: str, interval: str, df: pd.DataFrame):
                     float(row['High']),
                     float(row['Low']),
                     float(row['Close']),
-                    int(row['Volume'])
+                    volume
                 ))
             
             conn.commit()
@@ -650,6 +662,14 @@ def get_historical_data(symbol: str, duration: str = '1 D',
                     logger.warning(f"无法获取历史数据: {symbol}")
                     return None, {'code': 200, 'message': f'证券 {symbol} 不存在或没有数据'}
                 
+                if 'Volume' not in df.columns:
+                    logger.warning(f"警告: {symbol} 的数据中没有 Volume 列，成交量相关指标将无法计算")
+                elif df['Volume'].isna().all():
+                    logger.warning(f"警告: {symbol} 的成交量数据全部为 NaN，成交量相关指标将无法计算")
+                elif df['Volume'].isna().any():
+                    nan_count = df['Volume'].isna().sum()
+                    logger.warning(f"警告: {symbol} 有 {nan_count} 条数据的成交量为 NaN，将使用 0 代替")
+                
                 if df.index.tzinfo is not None:
                     df.index = df.index.tz_localize(None)
                 
@@ -706,10 +726,21 @@ def _format_historical_data(df: pd.DataFrame):
         格式化历史数据
         """
         result = []
+        # 检查是否有 Volume 列，如果没有或为 NaN 则使用 0
+        has_volume = 'Volume' in df.columns
+        
         for date, row in df.iterrows():
             date_str = date.strftime('%Y%m%d')
             if pd.notna(date.hour):  # 如果有时间
                 date_str = date.strftime('%Y%m%d %H:%M:%S')
+            
+            # 处理成交量数据：如果不存在或为 NaN，使用 0
+            volume = 0
+            if has_volume and pd.notna(row.get('Volume')):
+                try:
+                    volume = int(row['Volume'])
+                except (ValueError, TypeError):
+                    volume = 0
             
             result.append({
                 'date': date_str,
@@ -717,7 +748,7 @@ def _format_historical_data(df: pd.DataFrame):
                 'high': float(row['High']),
                 'low': float(row['Low']),
                 'close': float(row['Close']),
-                'volume': int(row['Volume']),
+                'volume': volume,
                 'average': float((row['High'] + row['Low'] + row['Close']) / 3),
                 'barCount': 1
             })
@@ -743,6 +774,10 @@ def calculate_technical_indicators(symbol: str, duration: str = '1 M', bar_size:
         highs = np.array([bar['high'] for bar in hist_data])
         lows = np.array([bar['low'] for bar in hist_data])
         volumes = np.array([bar['volume'] for bar in hist_data])
+        
+        valid_volumes = volumes[volumes > 0]
+        if len(valid_volumes) == 0:
+            logger.warning(f"警告: {symbol} 所有成交量数据为 0，成交量相关指标将无法正常计算")
         
         result = {
             'symbol': symbol,
@@ -812,8 +847,88 @@ def calculate_technical_indicators(symbol: str, duration: str = '1 M', bar_size:
         fibonacci_levels = calculate_fibonacci_retracement(highs, lows)
         result.update(fibonacci_levels)
 
-        # 15. 缠论分析（已优入63日数据）
-        chanlun_data = calculate_chanlun_analysis(closes, highs, lows, volumes)
+        # 15. 缠论分析（已优化，包含成交量分析）
+        # 提取时间数据用于缠论分析（只显示日期，不显示时分秒）
+        times = None
+        if hist_data:
+            times = []
+            for bar in hist_data:
+                date_str = bar.get('date', '')
+                try:
+                    # 转换时间格式：YYYYMMDD -> YYYY-MM-DD
+                    if len(date_str) == 8:
+                        times.append(f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}")
+                    elif ' ' in date_str:
+                        # 如果有时分秒，只提取日期部分
+                        dt = datetime.strptime(date_str, '%Y%m%d %H:%M:%S')
+                        times.append(dt.strftime('%Y-%m-%d'))
+                    else:
+                        times.append(date_str)
+                except Exception:
+                    times.append(date_str)
+        
+        chanlun_data = calculate_chanlun_analysis(closes, highs, lows, volumes, times=times)
+        
+        # 过滤：只保留一个月内的中枢、买入点和卖出点
+        one_month_ago = (datetime.now() - timedelta(days=30)).date()
+        
+        # 过滤中枢
+        if 'central_banks' in chanlun_data and chanlun_data['central_banks']:
+            filtered_central_banks = []
+            for cb in chanlun_data['central_banks']:
+                # 检查结束时间是否在一个月内
+                if cb.get('end_time'):
+                    try:
+                        end_date = datetime.strptime(cb['end_time'], '%Y-%m-%d').date()
+                        if end_date >= one_month_ago:
+                            filtered_central_banks.append(cb)
+                    except Exception:
+                        # 如果时间解析失败，保留该中枢
+                        filtered_central_banks.append(cb)
+                else:
+                    # 如果没有时间信息，根据索引判断（假设是最近的数据）
+                    if cb.get('end_index', 0) >= len(closes) - 30:
+                        filtered_central_banks.append(cb)
+            chanlun_data['central_banks'] = filtered_central_banks
+        
+        # 过滤买入点
+        if 'trading_points' in chanlun_data and 'buy_points' in chanlun_data['trading_points']:
+            filtered_buy_points = []
+            for bp in chanlun_data['trading_points']['buy_points']:
+                if bp.get('time'):
+                    try:
+                        point_date = datetime.strptime(bp['time'], '%Y-%m-%d').date()
+                        if point_date >= one_month_ago:
+                            filtered_buy_points.append(bp)
+                    except Exception:
+                        # 如果时间解析失败，根据索引判断
+                        if bp.get('index', 0) >= len(closes) - 30:
+                            filtered_buy_points.append(bp)
+                else:
+                    # 如果没有时间信息，根据索引判断
+                    if bp.get('index', 0) >= len(closes) - 30:
+                        filtered_buy_points.append(bp)
+            chanlun_data['trading_points']['buy_points'] = filtered_buy_points
+        
+        # 过滤卖出点
+        if 'trading_points' in chanlun_data and 'sell_points' in chanlun_data['trading_points']:
+            filtered_sell_points = []
+            for sp in chanlun_data['trading_points']['sell_points']:
+                if sp.get('time'):
+                    try:
+                        point_date = datetime.strptime(sp['time'], '%Y-%m-%d').date()
+                        if point_date >= one_month_ago:
+                            filtered_sell_points.append(sp)
+                    except Exception:
+                        # 如果时间解析失败，根据索引判断
+                        if sp.get('index', 0) >= len(closes) - 30:
+                            filtered_sell_points.append(sp)
+                else:
+                    # 如果没有时间信息，根据索引判断
+                    if sp.get('index', 0) >= len(closes) - 30:
+                        filtered_sell_points.append(sp)
+            chanlun_data['trading_points']['sell_points'] = filtered_sell_points
+        
         result.update(chanlun_data)
         
         # 16. CCI（顺势指标）
@@ -827,8 +942,12 @@ def calculate_technical_indicators(symbol: str, duration: str = '1 M', bar_size:
             result.update(adx_data)
         
         # 18. VWAP（成交量加权平均价）
+        # 按照 Futu 公式：AVGPRICE=TOTALAMOUNT/TOTALVOL, 否则使用(C+H+L)/3
+        # 使用较长周期（80天）以更接近 Futu 的计算结果
         if len(closes) >= 1:
-            vwap_data = calculate_vwap(closes, highs, lows, volumes)
+            # 使用80天周期以更接近 Futu，如果数据不足则使用所有可用数据
+            vwap_period = min(80, len(closes)) if len(closes) >= 80 else None
+            vwap_data = calculate_vwap(closes, highs, lows, volumes, period=vwap_period)
             result.update(vwap_data)
         
         # 19. SAR（抛物线转向指标）
@@ -855,8 +974,13 @@ def calculate_technical_indicators(symbol: str, duration: str = '1 M', bar_size:
         if len(closes) >= 52:
             ichimoku_data = calculate_ichimoku(closes, highs, lows)
             result.update(ichimoku_data)
+        
+        # 25. ML预测（机器学习预测，包含成交量分析）
+        if len(closes) >= 20 and len(valid_volumes) > 0:
+            ml_data = calculate_ml_predictions(closes, highs, lows, volumes)
+            result.update(ml_data)
 
-        # 25. 获取基本面数据
+        # 26. 获取基本面数据
         try:
             fundamental_data = get_fundamental_data(symbol)
             if fundamental_data:
@@ -926,7 +1050,7 @@ def generate_signals(indicators: dict):
                 signals['signals'].append('📉 MACD柱状图为负 - 看跌')
                 signals['score'] -= 10
                 
-        # 5. 成交量
+        # 5. 成交量分析（增强版）
         if 'volume_ratio' in indicators:
             ratio = indicators['volume_ratio']
             if ratio > 1.5:
@@ -934,6 +1058,51 @@ def generate_signals(indicators: dict):
                 signals['score'] += 10
             elif ratio < 0.5:
                 signals['signals'].append(f'📊 成交量萎缩 - 趋势减弱')
+        
+        # 5.1 价量配合分析
+        if 'price_volume_confirmation' in indicators:
+            confirmation = indicators['price_volume_confirmation']
+            if confirmation == 'bullish':
+                signals['signals'].append('✅ 价涨量增 - 看涨确认，趋势健康')
+                signals['score'] += 15
+            elif confirmation == 'bearish':
+                signals['signals'].append('❌ 价跌量增 - 看跌确认，下跌动能强')
+                signals['score'] -= 15
+            elif confirmation == 'divergence':
+                signals['signals'].append('⚠️ 价量背离 - 趋势可能反转，需谨慎')
+                signals['score'] -= 10
+        
+        # 5.2 成交量信号
+        if 'volume_signal' in indicators:
+            vol_signal = indicators['volume_signal']
+            if vol_signal == 'high_volume':
+                vol_ratio = indicators.get('volume_ratio', 1.0)
+                signals['signals'].append(f'🔥 高成交量信号 - 当前成交量是均量的{vol_ratio:.1f}倍')
+            elif vol_signal == 'low_volume':
+                signals['signals'].append('💤 低成交量信号 - 市场参与度低，趋势可能不稳固')
+        
+        # 5.3 OBV趋势确认
+        if 'obv_trend' in indicators:
+            obv_trend = indicators['obv_trend']
+            if obv_trend == 'up':
+                signals['signals'].append('📈 OBV上升趋势 - 资金流入，看涨')
+                signals['score'] += 10
+            elif obv_trend == 'down':
+                signals['signals'].append('📉 OBV下降趋势 - 资金流出，看跌')
+                signals['score'] -= 10
+        
+        # 5.4 VWAP位置确认
+        if 'vwap' in indicators and 'current_price' in indicators:
+            vwap = indicators['vwap']
+            price = indicators['current_price']
+            if price > vwap:
+                deviation = indicators.get('vwap_deviation', 0)
+                signals['signals'].append(f'✅ 价格在VWAP之上(偏离{deviation:.1f}%) - 多头占优')
+                signals['score'] += 8
+            else:
+                deviation = indicators.get('vwap_deviation', 0)
+                signals['signals'].append(f'❌ 价格在VWAP之下(偏离{deviation:.1f}%) - 空头占优')
+                signals['score'] -= 8
                 
         # 6. 波动率
         if 'volatility_20' in indicators:
@@ -1084,7 +1253,7 @@ def generate_signals(indicators: dict):
             elif atr_pct < 1.5:
                 signals['signals'].append(f'✅ 低波动(ATR {atr_pct:.1f}%) - 适合持仓')
         
-        # 14. CCI顺势指标（权重增强）
+        # 14. CCI顺势指标
         if 'cci' in indicators:
             cci = indicators['cci']
             cci_signal = indicators.get('cci_signal', 'neutral')
@@ -1103,7 +1272,7 @@ def generate_signals(indicators: dict):
                     signals['signals'].append(f'🟢 CCI={cci:.1f} 超卖区域 - 可能反弹')
                     signals['score'] += 18
         
-        # 15. ADX趋势强度（权重优化）
+        # 15. ADX趋势强度
         if 'adx' in indicators:
             adx = indicators['adx']
             adx_signal = indicators.get('adx_signal', 'weak_trend')
@@ -1233,6 +1402,29 @@ def generate_signals(indicators: dict):
             elif vp_status == 'below_va':
                 signals['signals'].append(f'📉 价格在价值区域下方(POC ${poc:.2f}) - 弱势失衡')
                 signals['score'] -= 12
+        
+        # 21. ML预测信号
+        if 'ml_trend' in indicators:
+            ml_trend = indicators['ml_trend']
+            ml_confidence = indicators.get('ml_confidence', 0)
+            ml_prediction = indicators.get('ml_prediction', 0)
+            
+            if ml_confidence > 50:
+                if ml_trend == 'up':
+                    signals['signals'].append(f'🤖 ML预测: 看涨趋势(置信度{ml_confidence:.1f}%, 预期涨幅{ml_prediction*100:.2f}%) - AI看多')
+                    signals['score'] += 15
+                elif ml_trend == 'down':
+                    signals['signals'].append(f'🤖 ML预测: 看跌趋势(置信度{ml_confidence:.1f}%, 预期跌幅{ml_prediction*100:.2f}%) - AI看空')
+                    signals['score'] -= 15
+                else:
+                    signals['signals'].append(f'🤖 ML预测: 横盘整理(置信度{ml_confidence:.1f}%) - AI中性')
+            elif ml_confidence > 30:
+                if ml_trend == 'up':
+                    signals['signals'].append(f'🤖 ML预测: 轻微看涨(置信度{ml_confidence:.1f}%) - 谨慎乐观')
+                    signals['score'] += 8
+                elif ml_trend == 'down':
+                    signals['signals'].append(f'🤖 ML预测: 轻微看跌(置信度{ml_confidence:.1f}%) - 谨慎悲观')
+                    signals['score'] -= 8
                 
         # 综合建议
         score = signals['score']
@@ -1831,11 +2023,31 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
      * 价值区下沿 (VAL): ${indicators.get('vp_val', 0):.2f}
      * 状态: {indicators.get('vp_status', 'neutral')}
 
-8. 风险评估:
+8. 成交量分析（重要）:
+   - 成交量比率: {indicators.get('volume_ratio', 0):.2f} (当前成交量/20日均量)
+   - 当前成交量: {indicators.get('current_volume', 0):,.0f}
+   - 20日平均成交量: {indicators.get('avg_volume_20', 0):,.0f}
+   - OBV能量潮: {indicators.get('obv_current', 0):,.0f}
+   - OBV趋势: {indicators.get('obv_trend', 'neutral')}
+   - VWAP成交量加权平均价: ${indicators.get('vwap', 0):.2f}
+   - VWAP偏离度: {indicators.get('vwap_deviation', 0):.2f}%
+   - VWAP信号: {indicators.get('vwap_signal', 'neutral')}
+   - ML预测价量关系:
+     * 价量配合: {indicators.get('price_volume_confirmation', 'neutral')}
+     * 成交量信号: {indicators.get('volume_signal', 'normal')}
+     * 成交量比率: {indicators.get('volume_ratio', 1.0):.2f}
+     * 价量背离度: {indicators.get('price_volume_divergence', 0):.3f}
+
+9. ML预测（机器学习）:
+   - 预测趋势: {indicators.get('ml_trend', 'unknown')}
+   - 预测置信度: {indicators.get('ml_confidence', 0):.1f}%
+   - 预期价格变化: {indicators.get('ml_prediction', 0)*100:.2f}%
+
+10. 风险评估:
    - 风险等级: {signals.get('risk', {}).get('level', 'unknown') if signals.get('risk') else 'unknown'}
    - 风险评分: {signals.get('risk', {}).get('score', 0) if signals.get('risk') else 0}/100
 
-9. 系统建议:
+11. 系统建议:
    - 综合评分: {signals.get('score', 0)}/100
    - 建议操作: {signals.get('recommendation', 'unknown')}
 
@@ -1844,7 +2056,16 @@ def _perform_ai_analysis(symbol, indicators, signals, duration, model='deepseek-
 
 请提供以下分析:
 1. 技术面分析: 当前市场状态（趋势、动能、波动）、关键技术信号解读
-2. 基本面分析: 
+2. 成交量分析（重要）:
+   - 分析当前成交量水平（与历史平均成交量对比）
+   - 价量关系分析：价格上涨/下跌时成交量的配合情况
+   - 价量背离检测：是否存在价涨量缩或价跌量增的背离现象
+   - OBV能量潮趋势分析：资金流向判断
+   - VWAP位置分析：当前价格相对于机构成本线的位置
+   - Volume Profile分析：筹码分布情况，POC和价值区域的意义
+   - ML预测的价量关系：机器学习模型对价量配合的判断
+   - 成交量对趋势的确认或否定作用
+3. 基本面分析: 
    - 基于财务指标和财务报表数据，分析公司财务状况、盈利能力、现金流健康度
    - 通过对比年度和季度财务报表，识别营收、利润、现金流的变化趋势
    - 分析资产负债表，评估公司资产结构、负债水平和财务稳健性

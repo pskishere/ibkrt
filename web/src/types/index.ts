@@ -172,6 +172,8 @@ export interface Indicators {
   central_banks?: Array<{
     start_index: number;
     end_index: number;
+    start_time?: string;  // 开始时间
+    end_time?: string;    // 结束时间
     high: number;  // ZG 中枢高
     low: number;   // ZD 中枢低
     center: number;
@@ -184,6 +186,7 @@ export interface Indicators {
     buy_points: Array<{
       type: string;  // '一买', '二买', '三买'
       index: number;
+      time?: string;  // 时间
       price: number;
       description: string;
       confidence: number;  // 置信度 0-1
@@ -192,6 +195,7 @@ export interface Indicators {
     sell_points: Array<{
       type: string;  // '一卖', '二卖', '三卖'
       index: number;
+      time?: string;  // 时间
       price: number;
       description: string;
       confidence: number;

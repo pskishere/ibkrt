@@ -42,10 +42,6 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
   const sarSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const pivotSeriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
-  const fractalMarkersRef = useRef<any[]>([]);
-  const strokeLinesRef = useRef<ISeriesApi<'Line'>[]>([]);
-  const segmentLinesRef = useRef<ISeriesApi<'Line'>[]>([]);
-  const centralBankAreasRef = useRef<ISeriesApi<'Line'>[]>([]);
 
   // 技术指标显示状态
   const [indicatorVisibility, setIndicatorVisibility] = useState({
@@ -57,10 +53,6 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     sar: false,
     vwap: false,
     pivotPoints: false,
-    fractals: false,
-    strokes: false,
-    segments: false,
-    centralBanks: false,
   });
 
   /**
@@ -143,7 +135,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
         borderColor: theme === 'light' ? '#e1e3eb' : '#2a2e39',
         scaleMargins: {
           top: 0.1,
-          bottom: 0.2,
+          bottom: 0.35, // 为成交量留出更多底部空间，增加间距
         },
         autoScale: true,
       },
@@ -180,24 +172,30 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     });
     candleSeriesRef.current = candleSeries as ISeriesApi<'Candlestick'>;
 
-    // 创建成交量系列 - TradingView 风格
+    // 创建成交量系列 - 显示在底部独立窗格
+    // 使用独立的priceScale，显示在图表底部
     const volumeSeries = chart.addSeries(HistogramSeries, {
       color: '#26a69a',
       priceFormat: {
         type: 'volume',
+        precision: 0,
       },
-      priceScaleId: '',
-      lastValueVisible: false,
+      priceScaleId: 'volume', // 使用独立的priceScale
+      lastValueVisible: true, // 显示最新值
       priceLineVisible: false,
     });
     volumeSeriesRef.current = volumeSeries as ISeriesApi<'Histogram'>;
 
-    // 设置成交量系列的缩放边距
-    chart.priceScale('').applyOptions({
+    // 设置成交量价格轴（显示在底部，与K线图有明显分隔）
+    chart.priceScale('volume').applyOptions({
       scaleMargins: {
-        top: 0.8,
-        bottom: 0,
+        top: 0.7, // 顶部留出70%空间给K线图，增加间距
+        bottom: 0.05, // 底部留5%空间
       },
+      entireTextOnly: false,
+      visible: true,
+      borderColor: theme === 'light' ? '#e1e3eb' : '#2a2e39',
+      autoScale: true,
     });
 
     // 响应式调整
@@ -237,11 +235,13 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     candleSeriesRef.current.setData(formattedData);
 
     // 更新成交量数据
-    if (volumeSeriesRef.current) {
+    if (volumeSeriesRef.current && candles.length > 0) {
       const volumeData = candles.map(candle => ({
         time: parseTime(candle.time),
-        value: candle.volume,
-        color: candle.close >= candle.open ? '#26a69a26' : '#ef535026',
+        value: candle.volume || 0, // 确保有值
+        color: candle.close >= candle.open 
+          ? '#26a69a80' // 上涨时使用半透明绿色
+          : '#ef535080', // 下跌时使用半透明红色
       }));
       volumeSeriesRef.current.setData(volumeData);
     }
@@ -566,285 +566,13 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     });
   }, [indicators, candles, indicatorVisibility.pivotPoints]);
 
-  /**
-   * 绘制缠论分型（优化版数据结构）
-   */
-  useEffect(() => {
-    if (!candleSeriesRef.current || !indicators || !candles || candles.length === 0) {
-      return;
-    }
-
-    // 延迟执行，确保数据已设置完成
-    const timer = setTimeout(() => {
-      const series = candleSeriesRef.current;
-      if (!series) return;
-
-      // 检查 setMarkers 方法是否存在
-      const seriesAny = series as any;
-      if (typeof seriesAny.setMarkers !== 'function') {
-        // setMarkers 方法不可用，跳过分型标记绘制
-        return;
-      }
-
-      // 清理旧的分型标记
-      fractalMarkersRef.current = [];
-
-      try {
-        if (!indicatorVisibility.fractals) {
-          seriesAny.setMarkers([]);
-          return;
-        }
-
-        // 支持新的数据结构：fractals.top_fractals 和 fractals.bottom_fractals
-        if (indicators.fractals && typeof indicators.fractals === 'object') {
-          const markers: any[] = [];
-
-          // 处理顶分型
-          const topFractals = (indicators.fractals as any).top_fractals || [];
-          if (Array.isArray(topFractals)) {
-            topFractals.forEach((fractal: any) => {
-              if (fractal && fractal.index !== undefined && fractal.price !== undefined) {
-                const candleIndex = fractal.index;
-                if (candleIndex >= 0 && candleIndex < candles.length) {
-                  const candle = candles[candleIndex];
-                  markers.push({
-                    time: parseTime(candle.time),
-                    position: 'aboveBar',
-                    color: '#ef5350',
-                    shape: 'arrowDown',
-                    size: 1,
-                    text: '⬇',
-                  });
-                }
-              }
-            });
-          }
-
-          // 处理底分型
-          const bottomFractals = (indicators.fractals as any).bottom_fractals || [];
-          if (Array.isArray(bottomFractals)) {
-            bottomFractals.forEach((fractal: any) => {
-              if (fractal && fractal.index !== undefined && fractal.price !== undefined) {
-                const candleIndex = fractal.index;
-                if (candleIndex >= 0 && candleIndex < candles.length) {
-                  const candle = candles[candleIndex];
-                  markers.push({
-                    time: parseTime(candle.time),
-                    position: 'belowBar',
-                    color: '#26a69a',
-                    shape: 'arrowUp',
-                    size: 1,
-                    text: '⬆',
-                  });
-                }
-              }
-            });
-          }
-
-          seriesAny.setMarkers(markers);
-          fractalMarkersRef.current = markers;
-        } else {
-          seriesAny.setMarkers([]);
-        }
-      } catch (error) {
-        console.error('Error setting fractal markers:', error);
-      }
-    }, 50);
-
-    return () => clearTimeout(timer);
-  }, [indicators, candles, indicatorVisibility.fractals]);
-
-  /**
-   * 绘制缠论笔
-   */
-  useEffect(() => {
-    if (!chartRef.current || !indicators || !candles || candles.length === 0) return;
-
-    // 清理旧的笔线
-    strokeLinesRef.current.forEach((series) => {
-      if (series && chartRef.current) {
-        try {
-          chartRef.current.removeSeries(series);
-        } catch (e) {
-          // 忽略已删除的系列
-        }
-      }
-    });
-    strokeLinesRef.current = [];
-
-    if (!indicatorVisibility.strokes) return;
-
-    if (indicators.strokes && Array.isArray(indicators.strokes)) {
-      indicators.strokes.forEach((stroke: any) => {
-        if (stroke && stroke.start_index !== undefined && stroke.end_index !== undefined) {
-          const startIdx = stroke.start_index;
-          const endIdx = stroke.end_index;
-
-          // 确保开始和结束索引不同，避免重复时间戳
-          if (startIdx === endIdx) return;
-
-          if (startIdx >= 0 && startIdx < candles.length &&
-            endIdx >= 0 && endIdx < candles.length) {
-            const startCandle = candles[startIdx];
-            const endCandle = candles[endIdx];
-
-            const startTime = parseTime(startCandle.time);
-            const endTime = parseTime(endCandle.time);
-
-            // 再次检查时间是否相同，确保数据有序
-            if (startTime >= endTime) return;
-
-            const strokeSeries = chartRef.current?.addSeries(LineSeries, {
-              color: stroke.type === 'up' ? '#4caf50' : '#f44336',
-              lineWidth: 1,
-              lineStyle: 0, // 实线
-              priceScaleId: 'left',
-            });
-
-            if (strokeSeries) {
-              strokeSeries.setData([
-                { time: startTime, value: stroke.start_price || startCandle.close },
-                { time: endTime, value: stroke.end_price || endCandle.close },
-              ]);
-              strokeLinesRef.current.push(strokeSeries as ISeriesApi<'Line'>);
-            }
-          }
-        }
-      });
-    }
-  }, [indicators, candles, indicatorVisibility.strokes]);
-
-  /**
-   * 绘制缠论线段
-   */
-  useEffect(() => {
-    if (!chartRef.current || !indicators || !candles || candles.length === 0) return;
-
-    // 清理旧的线段
-    segmentLinesRef.current.forEach((series) => {
-      if (series && chartRef.current) {
-        try {
-          chartRef.current.removeSeries(series);
-        } catch (e) {
-          // 忽略已删除的系列
-        }
-      }
-    });
-    segmentLinesRef.current = [];
-
-    if (!indicatorVisibility.segments) return;
-
-    if (indicators.segments && Array.isArray(indicators.segments)) {
-      indicators.segments.forEach((segment: any) => {
-        if (segment && segment.start_index !== undefined && segment.end_index !== undefined) {
-          const startIdx = segment.start_index;
-          const endIdx = segment.end_index;
-
-          // 确保开始和结束索引不同，避免重复时间戳
-          if (startIdx === endIdx) return;
-
-          if (startIdx >= 0 && startIdx < candles.length &&
-            endIdx >= 0 && endIdx < candles.length) {
-            const startCandle = candles[startIdx];
-            const endCandle = candles[endIdx];
-
-            const startTime = parseTime(startCandle.time);
-            const endTime = parseTime(endCandle.time);
-
-            // 再次检查时间是否相同，确保数据有序
-            if (startTime >= endTime) return;
-
-            const segmentSeries = chartRef.current?.addSeries(LineSeries, {
-              color: segment.type === 'up' ? '#2196f3' : '#ff9800',
-              lineWidth: 2,
-              lineStyle: 0, // 实线
-              priceScaleId: 'left',
-            });
-
-            if (segmentSeries) {
-              segmentSeries.setData([
-                { time: startTime, value: segment.start_price || startCandle.close },
-                { time: endTime, value: segment.end_price || endCandle.close },
-              ]);
-              segmentLinesRef.current.push(segmentSeries as ISeriesApi<'Line'>);
-            }
-          }
-        }
-      });
-    }
-  }, [indicators, candles, indicatorVisibility.segments]);
-
-  /**
-   * 绘制缠论中枢
-   */
-  useEffect(() => {
-    if (!chartRef.current || !indicators || !candles || candles.length === 0) return;
-
-    // 清理旧的中枢区域
-    centralBankAreasRef.current.forEach((series) => {
-      if (series && chartRef.current) {
-        try {
-          chartRef.current.removeSeries(series);
-        } catch (e) {
-          // 忽略已删除的系列
-        }
-      }
-    });
-    centralBankAreasRef.current = [];
-
-    if (!indicatorVisibility.centralBanks) return;
-
-    if (indicators.central_banks && Array.isArray(indicators.central_banks)) {
-      indicators.central_banks.forEach((centralBank: any) => {
-        if (centralBank && centralBank.start_index !== undefined && centralBank.end_index !== undefined) {
-          const startIdx = centralBank.start_index;
-          const endIdx = centralBank.end_index;
-
-          if (startIdx >= 0 && startIdx < candles.length &&
-            endIdx >= 0 && endIdx < candles.length) {
-            // 绘制中枢上沿
-            const upperSeries = chartRef.current?.addSeries(LineSeries, {
-              color: '#9c27b0',
-              lineWidth: 1,
-              lineStyle: 2, // 虚线
-              priceScaleId: 'left',
-            });
-
-            // 绘制中枢下沿
-            const lowerSeries = chartRef.current?.addSeries(LineSeries, {
-              color: '#9c27b0',
-              lineWidth: 1,
-              lineStyle: 2, // 虚线
-              priceScaleId: 'left',
-            });
-
-            if (upperSeries && lowerSeries && centralBank.high !== undefined && centralBank.low !== undefined) {
-              const timeRange = [];
-              for (let i = startIdx; i <= endIdx && i < candles.length; i++) {
-                timeRange.push(parseTime(candles[i].time));
-              }
-
-              const upperData = timeRange.map(time => ({ time, value: centralBank.high }));
-              const lowerData = timeRange.map(time => ({ time, value: centralBank.low }));
-
-              upperSeries.setData(upperData);
-              lowerSeries.setData(lowerData);
-
-              centralBankAreasRef.current.push(upperSeries as ISeriesApi<'Line'>, lowerSeries as ISeriesApi<'Line'>);
-            }
-          }
-        }
-      });
-    }
-  }, [indicators, candles, indicatorVisibility.centralBanks]);
 
   /**
    * 检查是否有缠论数据
    */
   const hasChanlunData = (): boolean => {
     if (!indicators) return false;
-    return !!(indicators.fractals || indicators.strokes || indicators.segments ||
-      indicators.central_banks || indicators.trend_type);
+    return !!indicators.trend_type;
   };
 
   /**
@@ -859,37 +587,6 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
       const trendText = indicators.trend_type === 'up' ? '上涨' :
         indicators.trend_type === 'down' ? '下跌' : '盘整';
       summary.push(`走势类型: ${trendText}`);
-    }
-
-    // 支持新的fractals数据结构
-    if (indicators.fractals && typeof indicators.fractals === 'object') {
-      const fractalsData = indicators.fractals as any;
-      const topFractals = Array.isArray(fractalsData.top_fractals) ? fractalsData.top_fractals : [];
-      const bottomFractals = Array.isArray(fractalsData.bottom_fractals) ? fractalsData.bottom_fractals : [];
-      if (topFractals.length > 0 || bottomFractals.length > 0) {
-        summary.push(`分型: 顶分型 ${topFractals.length}个, 底分型 ${bottomFractals.length}个`);
-      }
-    }
-
-    if (indicators.strokes) {
-      const strokes = Array.isArray(indicators.strokes) ? indicators.strokes : [];
-      if (strokes.length > 0) {
-        summary.push(`笔: ${strokes.length}条`);
-      }
-    }
-
-    if (indicators.segments) {
-      const segments = Array.isArray(indicators.segments) ? indicators.segments : [];
-      if (segments.length > 0) {
-        summary.push(`线段: ${segments.length}条`);
-      }
-    }
-
-    if (indicators.central_banks) {
-      const centralBanks = Array.isArray(indicators.central_banks) ? indicators.central_banks : [];
-      if (centralBanks.length > 0) {
-        summary.push(`中枢: ${centralBanks.length}个`);
-      }
     }
 
     return summary;
@@ -1056,66 +753,6 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
         >
           枢轴点
         </button>
-        {hasChanlunData() && (
-          <>
-            <button
-              onClick={() => toggleIndicator('fractals')}
-              style={{
-                padding: '4px 8px',
-                fontSize: '12px',
-                border: `1px solid ${indicatorVisibility.fractals ? '#2196f3' : '#ccc'}`,
-                backgroundColor: indicatorVisibility.fractals ? '#2196f3' : 'transparent',
-                color: indicatorVisibility.fractals ? '#fff' : (theme === 'light' ? '#333' : '#ccc'),
-                borderRadius: '4px',
-                cursor: 'pointer',
-              }}
-            >
-              分型
-            </button>
-            <button
-              onClick={() => toggleIndicator('strokes')}
-              style={{
-                padding: '4px 8px',
-                fontSize: '12px',
-                border: `1px solid ${indicatorVisibility.strokes ? '#2196f3' : '#ccc'}`,
-                backgroundColor: indicatorVisibility.strokes ? '#2196f3' : 'transparent',
-                color: indicatorVisibility.strokes ? '#fff' : (theme === 'light' ? '#333' : '#ccc'),
-                borderRadius: '4px',
-                cursor: 'pointer',
-              }}
-            >
-              笔
-            </button>
-            <button
-              onClick={() => toggleIndicator('segments')}
-              style={{
-                padding: '4px 8px',
-                fontSize: '12px',
-                border: `1px solid ${indicatorVisibility.segments ? '#2196f3' : '#ccc'}`,
-                backgroundColor: indicatorVisibility.segments ? '#2196f3' : 'transparent',
-                color: indicatorVisibility.segments ? '#fff' : (theme === 'light' ? '#333' : '#ccc'),
-                borderRadius: '4px',
-                cursor: 'pointer',
-              }}
-            >
-              线段
-            </button>
-            <button
-              onClick={() => toggleIndicator('centralBanks')}
-              style={{
-                padding: '4px 8px',
-                fontSize: '12px',
-                border: `1px solid ${indicatorVisibility.centralBanks ? '#2196f3' : '#ccc'}`,
-                backgroundColor: indicatorVisibility.centralBanks ? '#2196f3' : 'transparent',
-                color: indicatorVisibility.centralBanks ? '#fff' : (theme === 'light' ? '#333' : '#ccc'),
-                borderRadius: '4px',
-                cursor: 'pointer',
-              }}
-            >
-              中枢
-            </button>
-          </>
-        )}
       </div>
       <div
         ref={chartContainerRef}
