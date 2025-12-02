@@ -1,7 +1,7 @@
 /**
  * TradingView K线图组件
  * 使用 lightweight-charts 开源库显示股票K线图
- * 支持技术指标和缠论分析的可视化
+ * 支持技术指标的可视化
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -39,9 +39,6 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const maSeriesRefs = useRef<Map<number, ISeriesApi<'Line'>>>(new Map());
   const bbSeriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
-  const sarSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const pivotSeriesRefs = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
 
   // 技术指标显示状态
   const [indicatorVisibility, setIndicatorVisibility] = useState({
@@ -50,9 +47,6 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     ma20: false,
     ma50: false,
     bb: false,
-    sar: false,
-    vwap: false,
-    pivotPoints: false,
   });
 
   /**
@@ -160,6 +154,29 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     });
 
     chartRef.current = chart;
+
+    // 设置时间格式化 - 只显示日期，格式为 YYYY-MM-DD
+    chart.applyOptions({
+      localization: {
+        timeFormatter: (businessDayOrTime: Time) => {
+          let timestamp: number;
+          if (typeof businessDayOrTime === 'number') {
+            timestamp = businessDayOrTime * 1000;
+          } else if (typeof businessDayOrTime === 'object' && 'year' in businessDayOrTime) {
+            // BusinessDay 类型
+            const { year, month, day } = businessDayOrTime;
+            timestamp = new Date(year, month - 1, day).getTime();
+          } else {
+            timestamp = Date.now();
+          }
+          const date = new Date(timestamp);
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
+        },
+      },
+    });
 
     // 创建K线图系列 - TradingView 风格
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -445,152 +462,8 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     }
   }, [indicators, candles, indicatorVisibility.bb]);
 
-  /**
-   * 绘制SAR抛物线点位
-   */
-  useEffect(() => {
-    if (!chartRef.current || !indicators || !candles || candles.length === 0) return;
-
-    // 清理旧的SAR线
-    if (sarSeriesRef.current && chartRef.current) {
-      try {
-        chartRef.current.removeSeries(sarSeriesRef.current);
-        sarSeriesRef.current = null;
-      } catch (e) {
-        // 忽略已删除的系列
-      }
-    }
-
-    if (!indicatorVisibility.sar || indicators.sar === undefined) return;
-
-    // SAR是单个值，需要显示在所有K线上
-    const sarData = candles.map(candle => ({
-      time: parseTime(candle.time),
-      value: indicators.sar!,
-    }));
-
-    const sarSeries = chartRef.current.addSeries(LineSeries, {
-      color: indicators.sar_signal === 'bullish' ? '#4caf50' : '#f44336',
-      lineWidth: 1,
-      lineStyle: 3, // 点状线
-      title: 'SAR',
-      priceScaleId: 'left',
-    });
-    sarSeries.setData(sarData);
-    sarSeriesRef.current = sarSeries as ISeriesApi<'Line'>;
-  }, [indicators, candles, indicatorVisibility.sar]);
-
-  /**
-   * 绘制VWAP线
-   */
-  useEffect(() => {
-    if (!chartRef.current || !indicators || !candles || candles.length === 0) return;
-
-    // 清理旧的VWAP线
-    if (vwapSeriesRef.current && chartRef.current) {
-      try {
-        chartRef.current.removeSeries(vwapSeriesRef.current);
-        vwapSeriesRef.current = null;
-      } catch (e) {
-        // 忽略已删除的系列
-      }
-    }
-
-    if (!indicatorVisibility.vwap || indicators.vwap === undefined) return;
-
-    // VWAP是单个值，显示为水平线
-    const vwapData = candles.map(candle => ({
-      time: parseTime(candle.time),
-      value: indicators.vwap!,
-    }));
-
-    const vwapSeries = chartRef.current.addSeries(LineSeries, {
-      color: '#ff9800',
-      lineWidth: 1,
-      lineStyle: 0, // 实线
-      title: 'VWAP',
-      priceScaleId: 'left',
-    });
-    vwapSeries.setData(vwapData);
-    vwapSeriesRef.current = vwapSeries as ISeriesApi<'Line'>;
-  }, [indicators, candles, indicatorVisibility.vwap]);
-
-  /**
-   * 绘制枢轴点位线
-   */
-  useEffect(() => {
-    if (!chartRef.current || !indicators || !candles || candles.length === 0) return;
-
-    // 清理旧的枢轴点线
-    pivotSeriesRefs.current.forEach((series) => {
-      if (series && chartRef.current) {
-        try {
-          chartRef.current.removeSeries(series);
-        } catch (e) {
-          // 忽略已删除的系列
-        }
-      }
-    });
-    pivotSeriesRefs.current.clear();
-
-    if (!indicatorVisibility.pivotPoints) return;
-
-    const pivotLines = [
-      { key: 'pivot', value: indicators.pivot, color: '#9c27b0', name: 'P' },
-      { key: 'r1', value: indicators.pivot_r1, color: '#f44336', name: 'R1' },
-      { key: 'r2', value: indicators.pivot_r2, color: '#d32f2f', name: 'R2' },
-      { key: 'r3', value: indicators.pivot_r3, color: '#b71c1c', name: 'R3' },
-      { key: 's1', value: indicators.pivot_s1, color: '#4caf50', name: 'S1' },
-      { key: 's2', value: indicators.pivot_s2, color: '#388e3c', name: 'S2' },
-      { key: 's3', value: indicators.pivot_s3, color: '#2e7d32', name: 'S3' },
-    ].filter(line => line.value !== undefined);
-
-    pivotLines.forEach(({ key, value, color, name }) => {
-      const pivotData = candles.map(candle => ({
-        time: parseTime(candle.time),
-        value: value!,
-      }));
-
-      const pivotSeries = chartRef.current?.addSeries(LineSeries, {
-        color: color,
-        lineWidth: 1,
-        lineStyle: 2, // 虚线
-        title: name,
-        priceScaleId: 'left',
-      });
-
-      if (pivotSeries) {
-        pivotSeries.setData(pivotData);
-        pivotSeriesRefs.current.set(key, pivotSeries as ISeriesApi<'Line'>);
-      }
-    });
-  }, [indicators, candles, indicatorVisibility.pivotPoints]);
 
 
-  /**
-   * 检查是否有缠论数据
-   */
-  const hasChanlunData = (): boolean => {
-    if (!indicators) return false;
-    return !!indicators.trend_type;
-  };
-
-  /**
-   * 获取缠论信息摘要
-   */
-  const getChanlunSummary = (): string[] => {
-    if (!indicators) return [];
-
-    const summary: string[] = [];
-
-    if (indicators.trend_type) {
-      const trendText = indicators.trend_type === 'up' ? '上涨' :
-        indicators.trend_type === 'down' ? '下跌' : '盘整';
-      summary.push(`走势类型: ${trendText}`);
-    }
-
-    return summary;
-  };
 
   if (!symbol) {
     return (
@@ -617,8 +490,6 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
     }));
   };
 
-  const chanlunSummary = getChanlunSummary();
-  const showChanlunInfo = hasChanlunData() && chanlunSummary.length > 0;
 
   return (
     <div style={{ width: '100%' }}>
@@ -711,76 +582,11 @@ const TradingViewChart: React.FC<TradingViewChartProps> = ({
         >
           布林线
         </button>
-        <button
-          onClick={() => toggleIndicator('sar')}
-          style={{
-            padding: '4px 8px',
-            fontSize: '12px',
-            border: `1px solid ${indicatorVisibility.sar ? '#2196f3' : '#ccc'}`,
-            backgroundColor: indicatorVisibility.sar ? '#2196f3' : 'transparent',
-            color: indicatorVisibility.sar ? '#fff' : (theme === 'light' ? '#333' : '#ccc'),
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          SAR
-        </button>
-        <button
-          onClick={() => toggleIndicator('vwap')}
-          style={{
-            padding: '4px 8px',
-            fontSize: '12px',
-            border: `1px solid ${indicatorVisibility.vwap ? '#2196f3' : '#ccc'}`,
-            backgroundColor: indicatorVisibility.vwap ? '#2196f3' : 'transparent',
-            color: indicatorVisibility.vwap ? '#fff' : (theme === 'light' ? '#333' : '#ccc'),
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          VWAP
-        </button>
-        <button
-          onClick={() => toggleIndicator('pivotPoints')}
-          style={{
-            padding: '4px 8px',
-            fontSize: '12px',
-            border: `1px solid ${indicatorVisibility.pivotPoints ? '#2196f3' : '#ccc'}`,
-            backgroundColor: indicatorVisibility.pivotPoints ? '#2196f3' : 'transparent',
-            color: indicatorVisibility.pivotPoints ? '#fff' : (theme === 'light' ? '#333' : '#ccc'),
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
-          枢轴点
-        </button>
       </div>
       <div
         ref={chartContainerRef}
         style={{ width: '100%', height: `${height}px` }}
       />
-      {showChanlunInfo && (
-        <div style={{
-          marginTop: '12px',
-          padding: '12px',
-          backgroundColor: theme === 'light' ? '#f5f5f5' : '#1e1e1e',
-          borderRadius: '4px',
-          fontSize: '13px',
-          color: theme === 'light' ? '#666' : '#ccc',
-        }}>
-          <div style={{
-            fontWeight: 600,
-            marginBottom: '8px',
-            color: theme === 'light' ? '#333' : '#fff',
-          }}>
-            缠论分析:
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-            {chanlunSummary.map((item, index) => (
-              <span key={index}>{item}</span>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

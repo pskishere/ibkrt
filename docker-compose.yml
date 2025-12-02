@@ -10,8 +10,7 @@ services:
       - OLLAMA_HOST=http://host.docker.internal:11434
     volumes:
       - ./stock_cache.db:/app/stock_cache.db
-      - ./indicators:/app/indicators
-      - ./indicator_info.json:/app/indicator_info.json
+      - ./backend:/app/backend
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -16,15 +16,13 @@ RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
     pip config set install.trusted-host mirrors.aliyun.com
 
 # 复制依赖文件
-COPY requirements.txt .
+COPY backend/requirements.txt .
 
 # 安装Python依赖
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码
-COPY go.py .
-COPY indicators/ ./indicators/
-COPY indicator_info.json .
+COPY backend/ ./backend/
 
 # 创建数据库目录
 RUN mkdir -p /app/data
@@ -36,4 +34,4 @@ EXPOSE 8080
 ENV PYTHONUNBUFFERED=1
 
 # 启动应用
-CMD ["python", "go.py"]
+CMD ["python", "-m", "backend.app"]

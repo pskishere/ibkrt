@@ -20,7 +20,8 @@ python-dateutil==2.8.2
 pytz>=2023.3
 
 # AI Analysis
-ollama==0.3.3
+ollama>=0.6.1
+httpx[socks]>=0.28.0
 
 # Utilities
 Werkzeug==3.0.1

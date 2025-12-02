@@ -22,7 +22,7 @@ def calculate_ml_predictions(closes, highs, lows, volumes):
     valid_volumes = volumes[volumes > 0]
     if len(valid_volumes) == 0:
         return result
-    
+        
     # 准备特征数据
     # 特征1: 过去5天的价格变化率
     price_changes = np.diff(closes) / (closes[:-1] + 1e-8)
