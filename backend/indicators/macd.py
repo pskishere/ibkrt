@@ -42,8 +42,8 @@ def calculate_macd(closes, fast_period=12, slow_period=26, signal_period=9):
     signal_line_series = _calculate_ema_series(macd_line_series, signal_period)
     
     # 计算MACD Histogram
-    # 标准公式：MACD Histogram = (DIF - DEA) * 2
-    # 有些平台使用 MACD Histogram = DIF - DEA，但更常见的是乘以2
+    # 中国标准（富途、同花顺等）：MACD = (DIF - DEA) * 2
+    # 注：国际标准为 DIF - DEA，中国市场普遍使用 * 2 放大显示效果
     histogram_series = (macd_line_series - signal_line_series) * 2
     
     # 返回最新的值

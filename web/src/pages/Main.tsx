@@ -12,6 +12,7 @@ import {
   Input,
   InputNumber,
   Select,
+  Switch,
   AutoComplete,
   Descriptions,
   Spin,
@@ -22,7 +23,11 @@ import {
   FloatButton,
   Popover,
   Typography,
+  DatePicker,
+  Divider,
+  Card,
 } from 'antd';
+import dayjs, { type Dayjs } from 'dayjs';
 import {
   InboxOutlined,
   ReloadOutlined,
@@ -46,6 +51,8 @@ import {
   getHotStocks,
   getIndicatorInfo,
   refreshAnalyze,
+  tradingPlanAnalysis,
+  backtestTradingPlan,
 } from '../services/api';
 import type {
   Position,
@@ -53,6 +60,10 @@ import type {
   AnalysisResult,
   HotStock,
   IndicatorInfo,
+  TradingPlanResult,
+  TradingPlanRequest,
+  BacktestResult,
+  BacktestRequest,
 } from '../types/index';
 import TradingViewChart from '../components/TradingViewChart';
 import './Main.css';
@@ -85,6 +96,19 @@ const MainPage: React.FC = () => {
   const [analysisLoading, setAnalysisLoading] = useState<boolean>(false);
   const [aiAnalysisDrawerVisible, setAiAnalysisDrawerVisible] = useState<boolean>(false);
   const [currentSymbol, setCurrentSymbol] = useState<string>('');
+
+  // 交易操作规划相关状态
+  const [tradingPlanForm] = Form.useForm();
+  const [tradingPlanResult, setTradingPlanResult] = useState<TradingPlanResult | null>(null);
+  const [tradingPlanLoading, setTradingPlanLoading] = useState<boolean>(false);
+  const [tradingPlanDrawerVisible, setTradingPlanDrawerVisible] = useState<boolean>(false);
+  const [allowDayTrading, setAllowDayTrading] = useState<boolean>(false);
+
+  // 回测相关状态
+  const [backtestForm] = Form.useForm();
+  const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
+  const [backtestLoading, setBacktestLoading] = useState<boolean>(false);
+  const [backtestDrawerVisible, setBacktestDrawerVisible] = useState<boolean>(false);
 
   // 热门股票相关状态
   const [, setHotStocks] = useState<HotStock[]>([]);
@@ -255,6 +279,89 @@ const MainPage: React.FC = () => {
       message.error(error.message || '分析失败');
     } finally {
       setAnalysisLoading(false);
+    }
+  };
+
+  /**
+   * 交易操作规划分析
+   */
+  const handleTradingPlanAnalysis = async (values: any): Promise<void> => {
+    if (!currentSymbol) {
+      message.warning('请先进行一次技术分析');
+      return;
+    }
+
+    setTradingPlanLoading(true);
+    setTradingPlanResult(null);
+
+    try {
+      const request: TradingPlanRequest = {
+        planning_period: values.planning_period || '未来2周',
+        allow_day_trading: values.allow_day_trading || false,
+        current_position_percent: values.current_position_percent || 0.0,
+        duration: analyzeForm.getFieldValue('duration') || '3 M',
+        bar_size: analyzeForm.getFieldValue('barSize') || '1 day',
+        model: analyzeForm.getFieldValue('model') || 'deepseek-v3.1:671b-cloud',
+      };
+
+      const result = await tradingPlanAnalysis(currentSymbol, request);
+
+      if (result && result.success) {
+        setTradingPlanResult(result);
+        setTradingPlanDrawerVisible(true);
+      } else {
+        message.error(result?.message || '交易操作规划分析失败');
+      }
+    } catch (error: any) {
+      message.error(error.message || '交易操作规划分析失败');
+    } finally {
+      setTradingPlanLoading(false);
+    }
+  };
+
+  /**
+   * 交易操作规划回测处理函数
+   */
+  const handleBacktest = async (values: any): Promise<void> => {
+    if (!currentSymbol) {
+      message.warning('请先进行一次技术分析');
+      return;
+    }
+
+    setBacktestLoading(true);
+    setBacktestResult(null);
+
+    try {
+      const endDate = values.end_date as Dayjs;
+      if (!endDate) {
+        message.error('请选择回测结束日期');
+        setBacktestLoading(false);
+        return;
+      }
+
+      const endDateStr = endDate.format('YYYY-MM-DD');
+      
+      const request: BacktestRequest = {
+        end_date: endDateStr,
+        planning_period: values.planning_period || '未来2周',
+        allow_day_trading: values.allow_day_trading || false,
+        current_position_percent: values.current_position_percent || 0.0,
+        duration: analyzeForm.getFieldValue('duration') || '3 M',
+        bar_size: analyzeForm.getFieldValue('barSize') || '1 day',
+        model: analyzeForm.getFieldValue('model') || 'deepseek-v3.1:671b-cloud',
+      };
+
+      const result = await backtestTradingPlan(currentSymbol, request);
+
+      if (result && result.success) {
+        setBacktestResult(result);
+      } else {
+        message.error(result?.message || '回测分析失败');
+      }
+    } catch (error: any) {
+      message.error(error.message || '回测分析失败');
+    } finally {
+      setBacktestLoading(false);
     }
   };
 
@@ -466,8 +573,20 @@ const MainPage: React.FC = () => {
 
     // 监听窗口大小变化，更新移动端状态
     const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
+      const width = window.innerWidth;
+      setIsMobile(width <= 768);
+      
+      // 禁用移动端缩放
+      if (width <= 768) {
+        const viewport = document.querySelector('meta[name="viewport"]');
+        if (viewport) {
+          viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+        }
+      }
     };
+    
+    // 初始化移动端检测
+    handleResize();
 
     window.addEventListener('resize', handleResize);
 
@@ -767,24 +886,65 @@ const MainPage: React.FC = () => {
                 <div>
                   {/* 价格概览 */}
                   <div>
-                    <Descriptions
-                      title={
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span>
-                            <BarChartOutlined style={{ marginRight: 8 }} />
-                            价格信息
-                          </span>
+                    {/* 操作按钮区域 */}
+                    <Space style={{ marginBottom: 16 }}>
                           <Button
                             type="default"
                             size="small"
                             icon={<ReloadOutlined />}
                             onClick={handleRefreshAnalyze}
                             loading={analysisLoading}
-                            style={{ marginLeft: 16 }}
                           >
-                            刷新数据
+                        刷新
                           </Button>
-                        </div>
+                      <Button
+                        type="primary"
+                        size="small"
+                        icon={<RobotOutlined />}
+                        onClick={() => {
+                        if (!currentSymbol) {
+                          message.warning('请先进行一次分析');
+                          return;
+                        }
+                        // 设置默认值
+                        tradingPlanForm.setFieldsValue({
+                          planning_period: '未来2周',
+                          allow_day_trading: false,
+                          current_position_percent: 0,
+                          current_position_cost: 0,
+                          current_position_quantity: 0,
+                          account_value: 100000,
+                          risk_percent: 2.0,
+                        });
+                        setTradingPlanDrawerVisible(true);
+                      }}
+                      >
+                        交易规划
+                      </Button>
+                      <Button
+                        type="default"
+                        size="small"
+                        icon={<BarChartOutlined />}
+                        onClick={() => {
+                          if (!currentSymbol) {
+                            message.warning('请先进行一次分析');
+                            return;
+                          }
+                          setBacktestDrawerVisible(true);
+                          setBacktestResult(null);
+                          backtestForm.resetFields();
+                        }}
+                      >
+                        回测
+                      </Button>
+                    </Space>
+                    
+                    <Descriptions
+                      title={
+                        <span>
+                          <BarChartOutlined style={{ marginRight: 8 }} />
+                          价格信息
+                        </span>
                       }
                       bordered
                       column={{ xxl: 4, xl: 4, lg: 3, md: 2, sm: 2, xs: 1 }}
@@ -2218,9 +2378,14 @@ const MainPage: React.FC = () => {
             </span>
           }
           placement="right"
-          width={600}
+          width={isMobile ? '100%' : 600}
           onClose={() => setTradeDrawerVisible(false)}
           open={tradeDrawerVisible}
+          styles={{
+            body: {
+              padding: isMobile ? '12px' : '24px',
+            },
+          }}
         >
           <Tabs activeKey={tradeDrawerTab} onChange={setTradeDrawerTab}>
             <TabPane
@@ -2360,9 +2525,14 @@ const MainPage: React.FC = () => {
           </span>
         }
         placement="right"
-        width={800}
+        width={isMobile ? '100%' : 800}
         onClose={() => setAiAnalysisDrawerVisible(false)}
         open={aiAnalysisDrawerVisible}
+        styles={{
+          body: {
+            padding: isMobile ? '12px' : '24px',
+          },
+        }}
       >
         {aiAnalysisResult && aiAnalysisResult.ai_analysis && (
           <div style={{
@@ -2371,6 +2541,478 @@ const MainPage: React.FC = () => {
             padding: '8px',
           }}>
             <ReactMarkdown>{aiAnalysisResult.ai_analysis}</ReactMarkdown>
+          </div>
+        )}
+      </Drawer>
+
+      {/* 交易规划抽屉 */}
+      <Drawer
+        title={
+          <span>
+            <RobotOutlined style={{ marginRight: 8 }} />
+            交易规划 - {currentSymbol || '未选择股票'}
+          </span>
+        }
+        placement="right"
+        width={isMobile ? '100%' : 900}
+        onClose={() => {
+          setTradingPlanDrawerVisible(false);
+          setTradingPlanResult(null);
+        }}
+        open={tradingPlanDrawerVisible}
+        styles={{
+          body: {
+            padding: isMobile ? '12px' : '24px',
+          },
+        }}
+      >
+        {!tradingPlanResult ? (
+          <Form
+            form={tradingPlanForm}
+            layout="vertical"
+            onFinish={handleTradingPlanAnalysis}
+            initialValues={{
+              planning_period: '未来2周',
+              allow_day_trading: false,
+              current_position_percent: 0.0,
+            }}
+            onValuesChange={(changedValues) => {
+              if (changedValues.allow_day_trading !== undefined) {
+                setAllowDayTrading(changedValues.allow_day_trading);
+              }
+            }}
+          >
+            <Form.Item
+              label="规划周期"
+              name="planning_period"
+              rules={[
+                { required: true, message: '请输入规划周期描述' },
+              ]}
+              tooltip="描述规划的时间范围，例如 '未来2周'、'未来1个月'、'未来10个交易日' 等"
+            >
+              <Input
+                style={{ width: '100%' }}
+                placeholder="例如: 未来2周"
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="允许日内交易"
+              name="allow_day_trading"
+              valuePropName="checked"
+              tooltip="如果允许，可以在同一天买入并卖出；如果不允许，买入后需要至少持有到下一个交易日"
+            >
+              <div>
+                <Switch
+                  checkedChildren="允许"
+                  unCheckedChildren="不允许"
+                  onChange={(checked) => setAllowDayTrading(checked)}
+                />
+                <span style={{ marginLeft: 8, color: '#666' }}>
+                  {allowDayTrading 
+                    ? '可以在同一天买入并卖出' 
+                    : '买入后需要至少持有到下一个交易日'}
+                </span>
+              </div>
+            </Form.Item>
+
+            <Form.Item
+              label="当前持有仓位"
+              name="current_position_percent"
+              rules={[
+                { required: true, message: '请输入当前持有仓位百分比' },
+                { type: 'number', min: 0, max: 100, message: '当前持有仓位百分比必须在0-100之间' },
+              ]}
+              tooltip="输入您当前已经持有该股票占总资金的百分比，0%表示未持仓，100%表示全部资金都持有该股票"
+            >
+              <InputNumber
+                min={0}
+                max={100}
+                step={0.1}
+                precision={1}
+                style={{ width: '100%' }}
+                placeholder="例如: 0.0 (未持仓) 或 20.0 (持有20%)"
+                addonAfter="%"
+              />
+            </Form.Item>
+
+            <Form.Item>
+              <Space>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={tradingPlanLoading}
+                  icon={<RobotOutlined />}
+                >
+                  生成交易操作计划
+                </Button>
+                <Button onClick={() => setTradingPlanDrawerVisible(false)}>
+                  取消
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
+        ) : (
+          <div>
+            <Space direction="vertical" style={{ width: '100%' }} size="large">
+              <div>
+                <Text strong>分析配置:</Text>
+                <div style={{ marginTop: 8 }}>
+                  <Text>规划周期: </Text>
+                  <Text strong>{tradingPlanResult.planning_period || '未来2周'}</Text>
+                </div>
+                <div>
+                  <Text>允许日内交易: </Text>
+                  <Text strong>{tradingPlanResult.allow_day_trading ? '是' : '否'}</Text>
+                </div>
+                <div>
+                  <Text>当前持有仓位: </Text>
+                  <Text strong>{tradingPlanResult.current_position_percent || 0.0}%</Text>
+                </div>
+              </div>
+
+              {tradingPlanResult.trading_plan && (
+                <div style={{
+                  fontSize: 14,
+                  lineHeight: '1.8',
+                  padding: '16px',
+                  background: '#f5f5f5',
+                  borderRadius: '4px',
+                }}>
+                  <ReactMarkdown>{tradingPlanResult.trading_plan}</ReactMarkdown>
+                </div>
+              )}
+
+              <Button
+                onClick={() => {
+                  setTradingPlanResult(null);
+                  tradingPlanForm.resetFields();
+                }}
+              >
+                重新配置
+              </Button>
+            </Space>
+          </div>
+        )}
+      </Drawer>
+
+      {/* 回测抽屉 */}
+      <Drawer
+        title={
+          <span>
+            <BarChartOutlined style={{ marginRight: 8 }} />
+            回测 - {currentSymbol || '未选择股票'}
+          </span>
+        }
+        placement="right"
+        width={isMobile ? '100%' : 900}
+        onClose={() => {
+          setBacktestDrawerVisible(false);
+          setBacktestResult(null);
+          backtestForm.resetFields();
+        }}
+        open={backtestDrawerVisible}
+        styles={{
+          body: {
+            padding: isMobile ? '12px' : '24px',
+          },
+        }}
+      >
+        {!backtestResult ? (
+          <Form
+            form={backtestForm}
+            layout="vertical"
+            onFinish={handleBacktest}
+            initialValues={{
+              end_date: dayjs().subtract(14, 'day'),
+              planning_period: '未来2周',
+              allow_day_trading: false,
+              current_position_percent: 0.0,
+              account_value: 100000,
+              risk_percent: 2.0,
+            }}
+          >
+            <Form.Item
+              label="回测结束日期"
+              name="end_date"
+              rules={[
+                { required: true, message: '请选择回测结束日期' },
+              ]}
+              tooltip="选择历史日期作为回测截止点，系统将基于该日期之前的数据进行分析预测，然后对比该日期之后的实际结果"
+            >
+              <DatePicker
+                style={{ width: '100%' }}
+                format="YYYY-MM-DD"
+                disabledDate={(current) => {
+                  // 不能选择未来日期
+                  return current && current > dayjs().endOf('day');
+                }}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="规划周期"
+              name="planning_period"
+              rules={[
+                { required: true, message: '请输入规划周期描述' },
+              ]}
+              tooltip="描述规划的时间范围，例如 '未来2周'、'未来1个月' 等"
+            >
+              <Input
+                style={{ width: '100%' }}
+                placeholder="例如: 未来2周"
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="允许日内交易"
+              name="allow_day_trading"
+              valuePropName="checked"
+            >
+              <Switch
+                checkedChildren="允许"
+                unCheckedChildren="不允许"
+              />
+            </Form.Item>
+
+            <Divider orientation="left">持仓信息</Divider>
+
+            <Form.Item
+              label="当前持有仓位"
+              name="current_position_percent"
+              rules={[
+                { required: true, message: '请输入当前持有仓位百分比' },
+                { type: 'number', min: 0, max: 100, message: '当前持有仓位百分比必须在0-100之间' },
+              ]}
+            >
+              <InputNumber
+                min={0}
+                max={100}
+                step={0.1}
+                precision={1}
+                style={{ width: '100%' }}
+                placeholder="例如: 0.0"
+                addonAfter="%"
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="持仓成本价"
+              name="current_position_cost"
+              tooltip="如果有持仓，输入持仓成本价（美元）"
+            >
+              <InputNumber
+                min={0}
+                step={0.01}
+                precision={2}
+                style={{ width: '100%' }}
+                placeholder="例如: 150.50"
+                addonBefore="$"
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="持仓数量"
+              name="current_position_quantity"
+              tooltip="如果有持仓，输入持仓股数"
+            >
+              <InputNumber
+                min={0}
+                step={1}
+                precision={0}
+                style={{ width: '100%' }}
+                placeholder="例如: 100"
+                addonAfter="股"
+              />
+            </Form.Item>
+
+            <Divider orientation="left">账户设置</Divider>
+
+            <Form.Item
+              label="账户金额"
+              name="account_value"
+              rules={[
+                { required: true, message: '请输入账户金额' },
+                { type: 'number', min: 1000, message: '账户金额必须大于1000美元' },
+              ]}
+              tooltip="用于计算建议仓位大小"
+            >
+              <InputNumber
+                min={1000}
+                step={1000}
+                precision={0}
+                style={{ width: '100%' }}
+                placeholder="例如: 100000"
+                addonBefore="$"
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="风险偏好"
+              name="risk_percent"
+              rules={[
+                { required: true, message: '请选择风险偏好' },
+                { type: 'number', min: 0.5, max: 10, message: '风险百分比必须在0.5-10之间' },
+              ]}
+              tooltip="单笔交易愿意承受的最大风险百分比（保守1%，适中2%，激进3-5%）"
+            >
+              <InputNumber
+                min={0.5}
+                max={10}
+                step={0.5}
+                precision={1}
+                style={{ width: '100%' }}
+                placeholder="例如: 2.0"
+                addonAfter="%"
+              />
+            </Form.Item>
+
+            <Form.Item>
+              <Space>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={backtestLoading}
+                  icon={<BarChartOutlined />}
+                >
+                  开始回测
+                </Button>
+                <Button onClick={() => {
+                  setBacktestDrawerVisible(false);
+                  setBacktestResult(null);
+                  backtestForm.resetFields();
+                }}>
+                  取消
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
+        ) : (
+          <div>
+            <Space direction="vertical" style={{ width: '100%' }} size="large">
+              {/* 回测配置信息 */}
+              <Card size="small" title="回测配置">
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <div>
+                    <Text>回测结束日期: </Text>
+                    <Text strong>{backtestResult.backtest_date}</Text>
+                  </div>
+                  {backtestResult.planning_period && (
+                    <div>
+                      <Text>规划周期: </Text>
+                      <Text strong>{backtestResult.planning_period}</Text>
+                    </div>
+                  )}
+                  <div>
+                    <Text>历史数据点: </Text>
+                    <Text strong>{backtestResult.historical_data_points}</Text>
+                  </div>
+                  <div>
+                    <Text>实际数据点: </Text>
+                    <Text strong>{backtestResult.actual_data_points}</Text>
+                  </div>
+                </Space>
+              </Card>
+
+              {/* 预测vs实际结果对比 */}
+              {backtestResult.actual_result && (
+                <Card size="small" title="预测 vs 实际结果对比">
+                  <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                    <Divider orientation="left">价格对比</Divider>
+                    <Descriptions column={2} size="small">
+                      <Descriptions.Item label="回测日期价格">
+                        <Text strong>${backtestResult.actual_result.backtest_price.toFixed(2)}</Text>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="最终价格">
+                        <Text strong style={{
+                          color: backtestResult.actual_result.price_change_pct >= 0 ? '#3f8600' : '#cf1322'
+                        }}>
+                          ${backtestResult.actual_result.final_price.toFixed(2)}
+                          ({backtestResult.actual_result.price_change_pct >= 0 ? '+' : ''}
+                          {backtestResult.actual_result.price_change_pct.toFixed(2)}%)
+                        </Text>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="最高价格">
+                        <Text strong style={{ color: '#3f8600' }}>
+                          ${backtestResult.actual_result.max_price.toFixed(2)}
+                          ({backtestResult.actual_result.max_change_pct >= 0 ? '+' : ''}
+                          {backtestResult.actual_result.max_change_pct.toFixed(2)}%)
+                        </Text>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="最低价格">
+                        <Text strong style={{ color: '#cf1322' }}>
+                          ${backtestResult.actual_result.min_price.toFixed(2)}
+                          ({backtestResult.actual_result.min_change_pct >= 0 ? '+' : ''}
+                          {backtestResult.actual_result.min_change_pct.toFixed(2)}%)
+                        </Text>
+                      </Descriptions.Item>
+                    </Descriptions>
+                    
+                    {(backtestResult.actual_result.days_passed !== undefined || 
+                      backtestResult.actual_result.up_days !== undefined) && (
+                      <>
+                        <Divider orientation="left">走势统计</Divider>
+                        <Descriptions column={2} size="small">
+                          {backtestResult.actual_result.days_passed !== undefined && (
+                            <Descriptions.Item label="回测至今">
+                              <Text strong>{backtestResult.actual_result.days_passed} 天</Text>
+                            </Descriptions.Item>
+                          )}
+                          {backtestResult.actual_result.up_days !== undefined && (
+                            <Descriptions.Item label="上涨天数">
+                              <Text strong style={{ color: '#3f8600' }}>
+                                {backtestResult.actual_result.up_days} 天
+                              </Text>
+                            </Descriptions.Item>
+                          )}
+                          {backtestResult.actual_result.down_days !== undefined && (
+                            <Descriptions.Item label="下跌天数">
+                              <Text strong style={{ color: '#cf1322' }}>
+                                {backtestResult.actual_result.down_days} 天
+                              </Text>
+                            </Descriptions.Item>
+                          )}
+                          {backtestResult.actual_result.avg_daily_change !== undefined && (
+                            <Descriptions.Item label="平均日涨跌幅">
+                              <Text strong style={{
+                                color: backtestResult.actual_result.avg_daily_change >= 0 ? '#3f8600' : '#cf1322'
+                              }}>
+                                {backtestResult.actual_result.avg_daily_change >= 0 ? '+' : ''}
+                                {backtestResult.actual_result.avg_daily_change.toFixed(2)}%
+                              </Text>
+                            </Descriptions.Item>
+                          )}
+                        </Descriptions>
+                      </>
+                    )}
+                  </Space>
+                </Card>
+              )}
+
+              {/* 预测交易规划 */}
+              {backtestResult.trading_plan && (
+                <Card size="small" title="预测交易规划">
+                  <div style={{
+                    fontSize: 14,
+                    lineHeight: '1.8',
+                    padding: '16px',
+                    background: '#f5f5f5',
+                    borderRadius: '4px',
+                  }}>
+                    <ReactMarkdown>{backtestResult.trading_plan}</ReactMarkdown>
+                  </div>
+                </Card>
+              )}
+
+              <Button
+                onClick={() => {
+                  setBacktestResult(null);
+                  backtestForm.resetFields();
+                }}
+              >
+                重新配置
+              </Button>
+            </Space>
           </div>
         )}
       </Drawer>

@@ -18,8 +18,10 @@ from .settings import (
 from .yfinance import get_stock_info, get_historical_data
 from .analysis import (
     calculate_technical_indicators, generate_signals,
-    check_ollama_available, perform_ai_analysis
+    check_ollama_available, perform_ai_analysis,
+    perform_trading_plan_analysis
 )
+from .backtest import backtest_trading_plan
 
 # 创建Flask应用
 app = Flask(__name__)
@@ -375,6 +377,221 @@ def get_indicator_info():
     })
 
 
+@app.route('/api/trading-plan/<symbol>', methods=['POST'])
+def trading_plan_analysis(symbol):
+    """
+    AI交易操作规划分析 - 围绕关键价位生成操作规划
+    
+    请求体 JSON:
+    {
+        "planning_period": "未来2周",   # 规划周期描述 (默认: "未来2周")
+        "allow_day_trading": false,     # 是否允许日内交易 (默认: false)
+        "current_position_percent": 0.0,  # 当前持有仓位百分比 (默认: 0.0，表示未持仓)
+        "duration": "3 M",              # 数据周期 (默认: '3 M')
+        "bar_size": "1 day",            # K线周期 (默认: '1 day')
+        "model": "deepseek-v3.1:671b-cloud"  # AI模型名称 (默认: 'deepseek-v3.1:671b-cloud')
+    }
+    """
+    symbol_upper = symbol.upper()
+    
+    # 获取请求参数
+    data = request.get_json() or {}
+    planning_period = data.get('planning_period', '未来2周')
+    allow_day_trading = bool(data.get('allow_day_trading', False))
+    current_position_percent = float(data.get('current_position_percent', 0.0))
+    current_position_cost = float(data.get('current_position_cost', 0.0))  # 持仓成本价
+    current_position_quantity = int(data.get('current_position_quantity', 0))  # 持仓数量
+    account_value = float(data.get('account_value', 100000))  # 账户金额
+    risk_percent = float(data.get('risk_percent', 2.0))  # 风险百分比
+    duration = data.get('duration', '3 M')
+    bar_size = data.get('bar_size', '1 day')
+    model = data.get('model', 'deepseek-v3.1:671b-cloud')
+    
+    # 验证参数
+    if not planning_period or len(planning_period.strip()) == 0:
+        return jsonify({
+            'success': False,
+            'message': '规划周期不能为空'
+        }), 400
+    
+    if current_position_percent < 0 or current_position_percent > 100:
+        return jsonify({
+            'success': False,
+            'message': '当前持有仓位百分比必须在0-100之间'
+        }), 400
+    
+    if account_value <= 0:
+        return jsonify({
+            'success': False,
+            'message': '账户金额必须大于0'
+        }), 400
+    
+    if risk_percent <= 0 or risk_percent > 10:
+        return jsonify({
+            'success': False,
+            'message': '风险百分比必须在0-10之间'
+        }), 400
+    
+    logger.info(f"交易操作规划分析: {symbol_upper}, 规划周期={planning_period}, 日内交易={allow_day_trading}, 当前仓位={current_position_percent}%")
+    
+    # 检查Ollama是否可用
+    if not check_ollama_available():
+        return jsonify({
+            'success': False,
+            'message': 'Ollama不可用，无法执行AI分析',
+            'ai_available': False
+        }), 503
+    
+    try:
+        # 获取技术指标和信号
+        indicators, ind_error = calculate_technical_indicators(symbol_upper, duration, bar_size)
+        
+        if ind_error:
+            return jsonify({
+                'success': False,
+                'error_code': ind_error['code'],
+                'message': ind_error['message']
+            }), 400
+        
+        if not indicators:
+            return jsonify({
+                'success': False,
+                'message': '数据不足，无法计算技术指标'
+            }), 404
+        
+        # 生成买卖信号（传入账户和风险参数）
+        signals = generate_signals(indicators, account_value=account_value, risk_percent=risk_percent)
+        
+        # 计算持仓盈亏（如果有持仓）
+        position_pnl = None
+        if current_position_quantity > 0 and current_position_cost > 0:
+            current_price = indicators.get('current_price', 0)
+            if current_price > 0:
+                position_value = current_position_quantity * current_price
+                cost_value = current_position_quantity * current_position_cost
+                pnl = position_value - cost_value
+                pnl_percent = (pnl / cost_value) * 100 if cost_value > 0 else 0
+                position_pnl = {
+                    'quantity': current_position_quantity,
+                    'cost_price': current_position_cost,
+                    'current_price': current_price,
+                    'cost_value': cost_value,
+                    'current_value': position_value,
+                    'pnl': pnl,
+                    'pnl_percent': pnl_percent
+                }
+        
+        # 执行交易操作规划分析
+        trading_plan = perform_trading_plan_analysis(
+            symbol_upper,
+            indicators,
+            signals,
+            planning_period=planning_period,
+            allow_day_trading=allow_day_trading,
+            current_position_percent=current_position_percent,
+            model=model
+        )
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'planning_period': planning_period,
+            'allow_day_trading': allow_day_trading,
+            'current_position_percent': current_position_percent,
+            'account_value': account_value,
+            'risk_percent': risk_percent,
+            'position_pnl': position_pnl,
+            'indicators': indicators,
+            'signals': signals,
+            'trading_plan': trading_plan,
+            'model': model,
+            'ai_available': True
+        })
+        
+    except Exception as e:
+        logger.error(f"交易操作规划分析失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'交易操作规划分析失败: {str(e)}',
+            'ai_available': False
+        }), 500
+
+
+@app.route('/api/backtest-trading-plan/<symbol>', methods=['POST'])
+def backtest_trading_plan_api(symbol):
+    """
+    交易操作规划回测 - 基于历史日期回测交易操作规划结果
+    
+    请求体 JSON:
+    {
+        "end_date": "2024-01-15",           # 回测结束日期 (格式: YYYY-MM-DD 或 YYYYMMDD)
+        "planning_period": "未来2周",        # 规划周期描述 (默认: "未来2周")
+        "allow_day_trading": false,          # 是否允许日内交易 (默认: false)
+        "current_position_percent": 0.0,     # 当前持有仓位百分比 (默认: 0.0)
+        "duration": "3 M",                   # 数据周期 (默认: '3 M')
+        "bar_size": "1 day",                 # K线周期 (默认: '1 day')
+        "model": "deepseek-v3.1:671b-cloud"  # AI模型名称
+    }
+    """
+    symbol_upper = symbol.upper()
+    
+    # 获取请求参数
+    data = request.get_json() or {}
+    end_date_str = data.get('end_date', '')
+    planning_period = data.get('planning_period', '未来2周')
+    allow_day_trading = bool(data.get('allow_day_trading', False))
+    current_position_percent = float(data.get('current_position_percent', 0.0))
+    duration = data.get('duration', '3 M')
+    bar_size = data.get('bar_size', '1 day')
+    model = data.get('model', 'deepseek-v3.1:671b-cloud')
+    
+    # 验证参数
+    if not end_date_str:
+        return jsonify({
+            'success': False,
+            'message': '回测结束日期不能为空'
+        }), 400
+    
+    if current_position_percent < 0 or current_position_percent > 100:
+        return jsonify({
+            'success': False,
+            'message': '当前持有仓位百分比必须在0-100之间'
+        }), 400
+    
+    logger.info(f"交易操作规划回测: {symbol_upper}, 结束日期={end_date_str}")
+    
+    # 检查Ollama是否可用
+    if not check_ollama_available():
+        return jsonify({
+            'success': False,
+            'message': 'Ollama不可用，无法执行AI分析',
+            'ai_available': False
+        }), 503
+    
+    try:
+        # 执行回测
+        result = backtest_trading_plan(
+            symbol_upper,
+            end_date_str,
+            planning_period=planning_period,
+            allow_day_trading=allow_day_trading,
+            current_position_percent=current_position_percent,
+            duration=duration,
+            bar_size=bar_size,
+            model=model
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"交易操作规划回测失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'交易操作规划回测失败: {str(e)}',
+            'ai_available': False
+        }), 500
+
+
 @app.route('/', methods=['GET'])
 def index():
     """
@@ -389,6 +606,8 @@ def index():
             'health': 'GET /api/health - 健康检查',
             'analyze': 'GET /api/analyze/<symbol>?duration=1Y&bar_size=1day - 技术分析（自动包含AI分析）',
             'refresh_analyze': 'POST /api/refresh-analyze/<symbol>?duration=1Y&bar_size=1day - 强制刷新分析',
+            'trading_plan': 'POST /api/trading-plan/<symbol> - AI交易操作规划分析',
+            'backtest_trading_plan': 'POST /api/backtest-trading-plan/<symbol> - 回测交易操作规划',
             'hot_stocks': 'GET /api/hot-stocks?limit=20 - 热门股票列表',
             'indicator_info': 'GET /api/indicator-info?indicator=rsi - 指标说明'
         },

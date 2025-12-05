@@ -10,7 +10,7 @@ import numpy as np
 
 def _wilder_smooth(data, period):
     """
-    Wilder平滑法
+    Wilder平滑法（返回最终值）
     """
     if len(data) < period:
         return 0.0
@@ -23,6 +23,28 @@ def _wilder_smooth(data, period):
         smoothed = (smoothed * (period - 1) + data[i]) / period
     
     return smoothed
+
+
+def _wilder_smooth_series(data, period):
+    """
+    Wilder平滑法（返回完整序列）
+    用于高效计算ADX，避免重复计算
+    """
+    if len(data) < period:
+        return []
+    
+    smoothed_series = []
+    
+    # 第一个值使用简单平均
+    smoothed = np.mean(data[:period])
+    smoothed_series.append(smoothed)
+    
+    # 后续值使用Wilder平滑（增量计算）
+    for i in range(period, len(data)):
+        smoothed = (smoothed * (period - 1) + data[i]) / period
+        smoothed_series.append(smoothed)
+    
+    return smoothed_series
 
 
 def calculate_adx(closes, highs, lows, period=14):
@@ -81,17 +103,19 @@ def calculate_adx(closes, highs, lows, period=14):
         result['plus_di'] = float(plus_di)
         result['minus_di'] = float(minus_di)
         
-        # 计算DX序列（用于计算ADX）
+        # 计算DX序列（用于计算ADX）- 使用增量计算优化性能
+        # 一次性计算所有时刻的平滑值，避免重复计算（O(n)而非O(n²)）
+        smoothed_pdm_series = _wilder_smooth_series(plus_dm, period)
+        smoothed_mdm_series = _wilder_smooth_series(minus_dm, period)
+        smoothed_tr_series = _wilder_smooth_series(tr_list, period)
+        
         dx_values = []
-        for i in range(period, len(tr_list)):
-            # 逐步计算每个时刻的Wilder平滑值
-            smooth_pdm = _wilder_smooth(plus_dm[:i+1], period)
-            smooth_mdm = _wilder_smooth(minus_dm[:i+1], period)
-            smooth_tr = _wilder_smooth(tr_list[:i+1], period)
+        for i in range(len(smoothed_tr_series)):
+            smooth_tr_val = smoothed_tr_series[i]
             
-            if smooth_tr != 0:
-                pdi = (smooth_pdm / smooth_tr) * 100
-                mdi = (smooth_mdm / smooth_tr) * 100
+            if smooth_tr_val != 0:
+                pdi = (smoothed_pdm_series[i] / smooth_tr_val) * 100
+                mdi = (smoothed_mdm_series[i] / smooth_tr_val) * 100
                 di_sum = pdi + mdi
                 
                 if di_sum != 0:

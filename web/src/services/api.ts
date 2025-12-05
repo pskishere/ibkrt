@@ -9,6 +9,10 @@ import type {
   AnalysisResult,
   HotStock,
   IndicatorInfoResponse,
+  TradingPlanRequest,
+  TradingPlanResult,
+  BacktestRequest,
+  BacktestResult,
 } from '../types/index';
 
 // API基础URL - 使用相对路径，通过Nginx反向代理
@@ -262,6 +266,69 @@ export const refreshAnalyze = async (
       }
     );
     return handleResponse<AnalysisResult>(response) as AnalysisResult;
+  } catch (error) {
+    handleError(error);
+    throw error;
+  }
+};
+
+/**
+ * AI交易操作规划分析 - 基于用户设置的交易限制给出操作建议
+ * @param symbol - 股票代码
+ * @param request - 交易操作规划请求参数
+ */
+export const tradingPlanAnalysis = async (
+  symbol: string,
+  request: TradingPlanRequest
+): Promise<TradingPlanResult> => {
+  try {
+    const response = await api.post<TradingPlanResult>(
+      `/api/trading-plan/${symbol.toUpperCase()}`,
+      {
+        planning_period: request.planning_period,
+        allow_day_trading: request.allow_day_trading,
+        current_position_percent: request.current_position_percent || 0.0,
+        duration: request.duration || '3 M',
+        bar_size: request.bar_size || '1 day',
+        model: request.model || 'deepseek-v3.1:671b-cloud',
+      },
+      {
+        timeout: 120000, // 交易操作规划分析可能需要更长时间
+      }
+    );
+    return handleResponse<TradingPlanResult>(response) as TradingPlanResult;
+  } catch (error) {
+    handleError(error);
+    throw error;
+  }
+};
+
+/**
+ * 交易操作规划回测 - 基于历史日期回测交易操作规划结果
+ * @param symbol - 股票代码
+ * @param request - 回测请求参数
+ */
+export const backtestTradingPlan = async (
+  symbol: string,
+  request: BacktestRequest
+): Promise<BacktestResult> => {
+  try {
+    const response = await api.post<BacktestResult>(
+      `/api/backtest-trading-plan/${symbol.toUpperCase()}`,
+      {
+        end_date: request.end_date,
+        planning_period: request.planning_period || '未来2周',
+        allow_day_trading: request.allow_day_trading || false,
+        current_position_percent: request.current_position_percent || 0.0,
+        duration: request.duration || '3 M',
+        bar_size: request.bar_size || '1 day',
+        model: request.model || 'deepseek-v3.1:671b-cloud',
+      },
+      {
+        timeout: 120000, // 回测分析可能需要更长时间
+      }
+    );
+    return handleResponse<BacktestResult>(response) as BacktestResult;
   } catch (error) {
     handleError(error);
     throw error;

@@ -43,10 +43,38 @@
 @media (max-width: 768px) {
   .main-page {
     max-width: 100%;
+    /* 移动端优化 */
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
   }
 
   .main-page .fixed-top {
     padding: 8px 8px;
+    /* 移动端优化 - 防止固定元素抖动 */
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+  }
+  
+  /* 移动端 Drawer 全屏优化 */
+  :global(.ant-drawer) {
+    /* 确保 Drawer 在移动端全屏 */
+  }
+  
+  :global(.ant-drawer-content-wrapper) {
+    max-width: 100% !important;
+  }
+  
+  /* 移动端按钮触摸优化 */
+  :global(.ant-btn) {
+    touch-action: manipulation;
+  }
+  
+  /* 移动端输入框优化 */
+  :global(.ant-input),
+  :global(.ant-input-number-input),
+  :global(.ant-select-selector) {
+    font-size: 16px !important; /* 防止 iOS 自动缩放 */
+    min-height: 44px;
   }
 
   /* 表单在移动端垂直布局 */
@@ -107,6 +135,68 @@
     right: 16px !important;
     bottom: 16px !important;
   }
+  
+  /* 移动端 Drawer 全屏优化 */
+  :global(.ant-drawer-content-wrapper) {
+    max-width: 100% !important;
+  }
+  
+  /* 移动端按钮触摸优化 */
+  :global(.ant-btn) {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  /* 移动端输入框优化 - 防止 iOS 自动缩放 */
+  :global(.ant-input),
+  :global(.ant-input-number-input),
+  :global(.ant-select-selector),
+  :global(.ant-picker-input input) {
+    font-size: 16px !important;
+    min-height: 44px;
+  }
+  
+  /* 移动端表单优化 */
+  :global(.ant-form-item) {
+    margin-bottom: 16px;
+  }
+  
+  /* 移动端标签和文本优化 */
+  :global(.ant-form-item-label > label) {
+    font-size: 14px;
+    height: auto;
+    line-height: 1.5;
+  }
+  
+  /* 移动端卡片优化 */
+  :global(.ant-card) {
+    border-radius: 8px;
+    margin-bottom: 12px;
+  }
+  
+  /* 移动端表格优化 */
+  :global(.ant-table) {
+    font-size: 13px;
+  }
+  
+  /* 移动端标签优化 */
+  :global(.ant-tag) {
+    font-size: 12px;
+    padding: 2px 8px;
+    line-height: 20px;
+  }
+  
+  /* 移动端 Tabs 优化 */
+  :global(.ant-tabs-tab) {
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+  
+  /* 移动端 Switch 优化 */
+  :global(.ant-switch) {
+    min-width: 50px;
+    height: 28px;
+  }
 }
 
 /* 小屏幕手机 */
@@ -128,6 +218,25 @@
   .main-page :global(.ant-descriptions-item-content) {
     font-size: 11px;
     padding: 6px 4px !important;
+  }
+  
+  
+  /* 小屏幕输入框优化 */
+  :global(.ant-input),
+  :global(.ant-input-number-input),
+  :global(.ant-select-selector) {
+    font-size: 16px !important;
+    min-height: 40px;
+  }
+  
+  /* 小屏幕卡片标题优化 */
+  :global(.ant-card-head-title) {
+    font-size: 14px;
+  }
+  
+  /* 小屏幕文本优化 */
+  :global(.ant-typography) {
+    font-size: 14px;
   }
 }
 

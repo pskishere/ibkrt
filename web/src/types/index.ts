@@ -173,6 +173,57 @@ export interface AnalysisResult {
 }
 
 /**
+ * 交易操作规划请求参数
+ */
+export interface TradingPlanRequest {
+  planning_period: string;       // 规划周期描述，例如 "未来2周"、"未来1个月"
+  allow_day_trading: boolean;    // 是否允许日内交易
+  current_position_percent: number;  // 当前持有仓位百分比 (0-100)
+  current_position_cost?: number;    // 持仓成本价
+  current_position_quantity?: number; // 持仓数量
+  account_value?: number;        // 账户金额（美元），默认 100000
+  risk_percent?: number;         // 单笔交易风险百分比，默认 2.0
+  duration?: string;             // 数据周期，默认 '3 M'
+  bar_size?: string;             // K线周期，默认 '1 day'
+  model?: string;                // AI模型名称
+}
+
+/**
+ * 持仓盈亏信息
+ */
+export interface PositionPnL {
+  quantity: number;              // 持仓数量
+  cost_price: number;            // 成本价
+  current_price: number;         // 当前价
+  cost_value: number;            // 成本总额
+  current_value: number;         // 当前市值
+  pnl: number;                   // 盈亏金额
+  pnl_percent: number;           // 盈亏百分比
+}
+
+/**
+ * 交易操作规划结果
+ */
+export interface TradingPlanResult {
+  success: boolean;
+  symbol?: string;
+  planning_period?: string;
+  allow_day_trading?: boolean;
+  current_position_percent?: number;  // 当前持有仓位百分比
+  account_value?: number;        // 账户金额
+  risk_percent?: number;         // 风险百分比
+  position_pnl?: PositionPnL;    // 持仓盈亏信息
+  indicators?: Indicators;
+  signals?: Signals;
+  trading_plan?: string;         // AI生成的交易操作规划文本
+  model?: string;
+  ai_available?: boolean;
+  message?: string;
+  error_code?: number;
+  [key: string]: any;
+}
+
+/**
  * 热门股票
  */
 export interface HotStock {
@@ -325,5 +376,85 @@ export interface IndicatorInfoResponse {
   indicator?: string;
   info?: IndicatorInfo;
   message?: string;
+}
+
+/**
+ * 回测请求参数
+ */
+export interface BacktestRequest {
+  end_date: string;              // 回测结束日期，格式 'YYYY-MM-DD' 或 'YYYYMMDD'
+  duration?: string;             // 数据周期，默认 '3 M'
+  bar_size?: string;             // K线周期，默认 '1 day'
+  model?: string;                // AI模型名称
+  planning_period?: string;      // 规划周期描述（仅用于交易操作规划回测）
+  allow_day_trading?: boolean;   // 是否允许日内交易（仅用于交易操作规划回测）
+  current_position_percent?: number;  // 当前持有仓位百分比（仅用于交易操作规划回测）
+}
+
+/**
+ * 止损止盈模拟结果
+ */
+export interface StopLossTakeProfitSimulation {
+  entry_price: number;           // 入场价格
+  stop_loss: number;             // 止损价位
+  take_profit: number;           // 止盈价位
+  action: string;                // 操作类型 'buy' 或 'sell'
+  triggered: boolean;            // 是否触发
+  exit_type: string | null;      // 出场类型 'stop_loss', 'take_profit', 'hold'
+  exit_price: number | null;     // 出场价格
+  exit_day: number | null;       // 出场天数
+  holding_days: number;          // 持有天数
+  gross_return_percent: number;  // 毛收益率
+  net_return_percent: number;    // 净收益率（扣除成本）
+  total_cost_percent: number;    // 总成本百分比（佣金+滑点）
+}
+
+/**
+ * 回测实际结果
+ */
+export interface BacktestActualResult {
+  backtest_price: number;        // 回测日期的价格
+  final_price: number;           // 最终价格
+  max_price: number;             // 最高价格
+  min_price: number;             // 最低价格
+  price_change_pct: number;      // 价格变化百分比
+  max_change_pct: number;        // 最大涨幅百分比
+  min_change_pct: number;        // 最大跌幅百分比
+  days_passed?: number;          // 回测至今经过的天数
+  up_days?: number;              // 上涨天数
+  down_days?: number;            // 下跌天数
+  avg_daily_change?: number;     // 平均日涨跌幅
+  stop_loss_take_profit_simulation?: StopLossTakeProfitSimulation;  // 止损止盈模拟
+  actual_data: Array<{           // 实际价格数据
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }>;
+}
+
+/**
+ * 回测结果
+ */
+export interface BacktestResult {
+  success: boolean;
+  symbol?: string;
+  backtest_date?: string;        // 回测结束日期
+  planning_period?: string;      // 规划周期（仅用于交易操作规划回测）
+  historical_data_points?: number;  // 历史数据点数量
+  actual_data_points?: number;      // 实际数据点数量
+  indicators?: Indicators;       // 技术指标
+  signals?: Signals;             // 交易信号
+  ai_analysis?: string;          // AI分析结果（仅用于AI分析回测）
+  trading_plan?: string;         // 交易操作规划（仅用于交易操作规划回测）
+  actual_result?: BacktestActualResult;  // 实际结果
+  prediction_price?: number;     // 预测价格（回测日期价格）
+  model?: string;
+  ai_available?: boolean;
+  message?: string;
+  error_code?: number;
+  [key: string]: any;
 }
 

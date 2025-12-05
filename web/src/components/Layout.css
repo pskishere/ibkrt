@@ -1,6 +1,9 @@
 .app-layout {
   height: 100vh;
+  height: 100dvh; /* 使用动态视口高度，适配移动端浏览器 */
   overflow: hidden;
+  /* 移动端优化 */
+  -webkit-overflow-scrolling: touch;
 }
 
 .app-content {
@@ -8,4 +11,20 @@
   background: #fff;
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
+  /* 移动端优化 */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 移动端优化 */
+@media (max-width: 768px) {
+  .app-content {
+    padding: 12px 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-content {
+    padding: 8px 4px;
+  }
 }

@@ -91,30 +91,34 @@ def calculate_ichimoku(closes, highs, lows, short=9, mid=26, long_period=52):
             b_values[i] = (hhv + llv) / 2
     
     # 返回最新值（用于API）
-    # 注意：富途显示的A和B值是当前时刻计算的，不是REF后的值
-    # REF函数只用于图表绘制时的位置偏移，但显示的数值是当前时刻的值
+    # 转换线和基准线：当前时刻的值
     if not np.isnan(cl_values[-1]):
         result['ichimoku_tenkan_sen'] = float(cl_values[-1])
     if not np.isnan(dl_values[-1]):
         result['ichimoku_kijun_sen'] = float(dl_values[-1])
     
-    # A的显示值：当前时刻的(CL+DL)/2（匹配富途显示）
+    # Senkou Span A：当前时刻的(CL+DL)/2，在图表上向未来偏移26期显示
+    # API返回当前计算值，图表绘制时处理偏移
     if not np.isnan(cl_values[-1]) and not np.isnan(dl_values[-1]):
         result['ichimoku_senkou_span_a'] = float((cl_values[-1] + dl_values[-1]) / 2)
     
-    # B的显示值：当前时刻的52日最高最低中点（匹配富途显示）
+    # Senkou Span B：当前时刻的52日最高最低中点，在图表上向未来偏移26期显示
     if n >= long_period:
         period52_high = np.max(highs[-long_period:])
         period52_low = np.min(lows[-long_period:])
         result['ichimoku_senkou_span_b'] = float((period52_high + period52_low) / 2)
     
-    # 延迟线：当前收盘价（在图表上向后移动MID期绘制）
+    # Chikou Span：当前收盘价，在图表上向过去偏移26期显示
     result['ichimoku_chikou_span'] = float(closes[-1])
     
-    # 计算当前云层（26天前的A和B，即当前时刻的云层）
-    if n >= long_period + mid:
-        current_a = a_values[-1] if not np.isnan(a_values[-1]) else None
-        current_b = b_values[-1] if not np.isnan(b_values[-1]) else None
+    # 计算当前时刻的云层位置（用于价格相对位置判断）
+    # 当前时刻的云层应该是26期前计算的A和B值（因为它们向未来偏移了26期）
+    # 所以我们需要取索引为 -26-1 的a_values和b_values（如果存在）
+    if n >= long_period + mid * 2:
+        # 当前云层 = 26期前计算的Senkou Span值
+        cloud_idx = -(mid + 1) if len(a_values) >= mid + 1 else -1
+        current_a = a_values[cloud_idx] if cloud_idx < 0 and not np.isnan(a_values[cloud_idx]) else None
+        current_b = b_values[cloud_idx] if cloud_idx < 0 and not np.isnan(b_values[cloud_idx]) else None
         
         if current_a is not None and current_b is not None:
             result['ichimoku_cloud_top'] = float(max(current_a, current_b))
@@ -123,11 +127,27 @@ def calculate_ichimoku(closes, highs, lows, short=9, mid=26, long_period=52):
             # 判断当前价格相对于云层的位置
             current_price = closes[-1]
             if current_price > result['ichimoku_cloud_top']:
-                result['ichimoku_status'] = 'above_cloud'  # 云上 (看涨)
+                result['ichimoku_status'] = 'bullish'  # 云上 (看涨)
             elif current_price < result['ichimoku_cloud_bottom']:
-                result['ichimoku_status'] = 'below_cloud'  # 云下 (看跌)
+                result['ichimoku_status'] = 'bearish'  # 云下 (看跌)
             else:
-                result['ichimoku_status'] = 'inside_cloud'  # 云中 (盘整)
+                result['ichimoku_status'] = 'neutral'  # 云中 (盘整)
+    elif n >= long_period + mid:
+        # 数据不足时的备用方案：使用最新的a_values和b_values
+        current_a = a_values[-1] if not np.isnan(a_values[-1]) else None
+        current_b = b_values[-1] if not np.isnan(b_values[-1]) else None
+        
+        if current_a is not None and current_b is not None:
+            result['ichimoku_cloud_top'] = float(max(current_a, current_b))
+            result['ichimoku_cloud_bottom'] = float(min(current_a, current_b))
+            
+            current_price = closes[-1]
+            if current_price > result['ichimoku_cloud_top']:
+                result['ichimoku_status'] = 'bullish'
+            elif current_price < result['ichimoku_cloud_bottom']:
+                result['ichimoku_status'] = 'bearish'
+            else:
+                result['ichimoku_status'] = 'neutral'
     
     # 转换线与基准线交叉信号
     if not np.isnan(cl_values[-1]) and not np.isnan(dl_values[-1]):

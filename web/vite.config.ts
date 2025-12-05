@@ -12,6 +12,8 @@ export default defineConfig({
   ],
   server: {
     port: 3000,
+    // 允许所有域名访问（包括 ngrok 等反向代理域名）
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
