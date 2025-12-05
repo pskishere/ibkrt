@@ -1,5 +1,5 @@
 /**
- * 主页面 - 合并持仓、交易订单、分析功能
+ * 主页面 - 股票分析功能
  */
 import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -12,7 +12,6 @@ import {
   Input,
   InputNumber,
   Select,
-  Switch,
   AutoComplete,
   Descriptions,
   Spin,
@@ -21,25 +20,17 @@ import {
   Tabs,
   Collapse,
   FloatButton,
-  Popover,
-  Typography,
-  DatePicker,
-  Divider,
-  Card,
 } from 'antd';
-import dayjs, { type Dayjs } from 'dayjs';
 import {
   InboxOutlined,
   ReloadOutlined,
   DollarOutlined,
   ShoppingOutlined,
-  CloseCircleOutlined,
   BarChartOutlined,
   RobotOutlined,
   RiseOutlined,
   FallOutlined,
   RightOutlined,
-  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import {
   getPositions,
@@ -51,8 +42,6 @@ import {
   getHotStocks,
   getIndicatorInfo,
   refreshAnalyze,
-  tradingPlanAnalysis,
-  backtestTradingPlan,
 } from '../services/api';
 import type {
   Position,
@@ -60,16 +49,15 @@ import type {
   AnalysisResult,
   HotStock,
   IndicatorInfo,
-  TradingPlanResult,
-  TradingPlanRequest,
-  BacktestResult,
-  BacktestRequest,
 } from '../types/index';
 import TradingViewChart from '../components/TradingViewChart';
+import { IndicatorLabel } from '../components/IndicatorLabel';
+import { FinancialTable } from '../components/FinancialTable';
+import { getPositionColumns, getOrderColumns } from '../config/tableColumns';
+import { formatValue, formatLargeNumber, getRSIStatus, statusMaps } from '../utils/formatters';
 import './Main.css';
 
 const { TabPane } = Tabs;
-const { Text, Title } = Typography;
 
 interface StockOption {
   value: string;
@@ -96,19 +84,6 @@ const MainPage: React.FC = () => {
   const [analysisLoading, setAnalysisLoading] = useState<boolean>(false);
   const [aiAnalysisDrawerVisible, setAiAnalysisDrawerVisible] = useState<boolean>(false);
   const [currentSymbol, setCurrentSymbol] = useState<string>('');
-
-  // 交易操作规划相关状态
-  const [tradingPlanForm] = Form.useForm();
-  const [tradingPlanResult, setTradingPlanResult] = useState<TradingPlanResult | null>(null);
-  const [tradingPlanLoading, setTradingPlanLoading] = useState<boolean>(false);
-  const [tradingPlanDrawerVisible, setTradingPlanDrawerVisible] = useState<boolean>(false);
-  const [allowDayTrading, setAllowDayTrading] = useState<boolean>(false);
-
-  // 回测相关状态
-  const [backtestForm] = Form.useForm();
-  const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
-  const [backtestLoading, setBacktestLoading] = useState<boolean>(false);
-  const [backtestDrawerVisible, setBacktestDrawerVisible] = useState<boolean>(false);
 
   // 热门股票相关状态
   const [, setHotStocks] = useState<HotStock[]>([]);
@@ -213,8 +188,6 @@ const MainPage: React.FC = () => {
    * 执行分析 - 使用合并后的接口，一次请求同时获取技术分析和AI分析
    */
   const handleAnalyze = async (values: any): Promise<void> => {
-    console.log('handleAnalyze called with values:', values);
-
     if (!values || !values.symbol) {
       message.error('请输入股票代码');
       return;
@@ -230,50 +203,24 @@ const MainPage: React.FC = () => {
       const barSizeValue = barSize || '1 day';
       const modelValue = model || 'deepseek-v3.1:671b-cloud';
 
-      console.log('Starting analysis request:', { symbol, durationValue, barSizeValue, modelValue });
-
-      // 调用统一接口，后端会自动检测 Ollama 并执行AI分析
       const result = await analyze(symbol, durationValue, barSizeValue, modelValue);
 
-      console.log('Analysis result:', result);
-
-      // 处理分析结果
       if (result && result.success) {
-        // 打印获取到的数据到console
-        console.log('=== 技术分析数据 ===');
-        console.log('完整结果:', result);
-        console.log('技术指标:', result.indicators);
-        console.log('交易信号:', result.signals);
-        console.log('K线数据:', result.candles);
-        console.log('K线数据条数:', result.candles?.length || 0);
-        if (result.ai_analysis) {
-          console.log('AI分析:', result.ai_analysis);
-        }
-        console.log('==================');
-
-        // 设置技术分析结果（包含 indicators 和 signals）
         setAnalysisResult(result);
-        setCurrentSymbol(symbol); // 保存当前分析的股票代码
+        setCurrentSymbol(symbol);
 
-        // 如果有AI分析结果，设置AI分析结果
         if (result.ai_analysis) {
           setAiAnalysisResult(result);
           setAiAnalysisDrawerVisible(true);
         }
       } else {
-        // 处理错误，特别处理证券不存在的情况
         let errorMsg = result?.message || '分析失败';
-
-        // 如果有错误代码，显示更详细的错误信息
-        if (result?.error_code) {
-          if (result.error_code === 200) {
-            errorMsg = `股票代码 "${symbol}" 不存在或无权限查询，请检查代码是否正确`;
-          } else {
-            errorMsg = `错误[${result.error_code}]: ${result.message}`;
-          }
+        if (result?.error_code === 200) {
+          errorMsg = `股票代码 "${symbol}" 不存在或无权限查询，请检查代码是否正确`;
+        } else if (result?.error_code) {
+          errorMsg = `错误[${result.error_code}]: ${result.message}`;
         }
-
-        message.error(errorMsg, 5); // 显示5秒
+        message.error(errorMsg, 5);
       }
     } catch (error: any) {
       message.error(error.message || '分析失败');
@@ -283,101 +230,14 @@ const MainPage: React.FC = () => {
   };
 
   /**
-   * 交易操作规划分析
-   */
-  const handleTradingPlanAnalysis = async (values: any): Promise<void> => {
-    if (!currentSymbol) {
-      message.warning('请先进行一次技术分析');
-      return;
-    }
-
-    setTradingPlanLoading(true);
-    setTradingPlanResult(null);
-
-    try {
-      const request: TradingPlanRequest = {
-        planning_period: values.planning_period || '未来2周',
-        allow_day_trading: values.allow_day_trading || false,
-        current_position_percent: values.current_position_percent || 0.0,
-        duration: analyzeForm.getFieldValue('duration') || '3 M',
-        bar_size: analyzeForm.getFieldValue('barSize') || '1 day',
-        model: analyzeForm.getFieldValue('model') || 'deepseek-v3.1:671b-cloud',
-      };
-
-      const result = await tradingPlanAnalysis(currentSymbol, request);
-
-      if (result && result.success) {
-        setTradingPlanResult(result);
-        setTradingPlanDrawerVisible(true);
-      } else {
-        message.error(result?.message || '交易操作规划分析失败');
-      }
-    } catch (error: any) {
-      message.error(error.message || '交易操作规划分析失败');
-    } finally {
-      setTradingPlanLoading(false);
-    }
-  };
-
-  /**
-   * 交易操作规划回测处理函数
-   */
-  const handleBacktest = async (values: any): Promise<void> => {
-    if (!currentSymbol) {
-      message.warning('请先进行一次技术分析');
-      return;
-    }
-
-    setBacktestLoading(true);
-    setBacktestResult(null);
-
-    try {
-      const endDate = values.end_date as Dayjs;
-      if (!endDate) {
-        message.error('请选择回测结束日期');
-        setBacktestLoading(false);
-        return;
-      }
-
-      const endDateStr = endDate.format('YYYY-MM-DD');
-      
-      const request: BacktestRequest = {
-        end_date: endDateStr,
-        planning_period: values.planning_period || '未来2周',
-        allow_day_trading: values.allow_day_trading || false,
-        current_position_percent: values.current_position_percent || 0.0,
-        duration: analyzeForm.getFieldValue('duration') || '3 M',
-        bar_size: analyzeForm.getFieldValue('barSize') || '1 day',
-        model: analyzeForm.getFieldValue('model') || 'deepseek-v3.1:671b-cloud',
-      };
-
-      const result = await backtestTradingPlan(currentSymbol, request);
-
-      if (result && result.success) {
-        setBacktestResult(result);
-      } else {
-        message.error(result?.message || '回测分析失败');
-      }
-    } catch (error: any) {
-      message.error(error.message || '回测分析失败');
-    } finally {
-      setBacktestLoading(false);
-    }
-  };
-
-  /**
    * 刷新分析 - 强制重新获取数据，不使用缓存
    */
   const handleRefreshAnalyze = async (): Promise<void> => {
-    console.log('handleRefreshAnalyze called');
-
-    // 检查是否有当前分析的股票代码
     if (!currentSymbol) {
       message.warning('请先进行一次分析');
       return;
     }
 
-    // 从表单获取当前参数
     const formValues = analyzeForm.getFieldsValue();
     const duration = formValues.duration || '3 M';
     const barSize = formValues.barSize || '1 day';
@@ -388,51 +248,23 @@ const MainPage: React.FC = () => {
     setAiAnalysisResult(null);
 
     try {
-      console.log('Starting refresh analysis:', { currentSymbol, duration, barSize, model });
-
-      // 调用刷新接口，强制重新获取数据
       const result = await refreshAnalyze(currentSymbol, duration, barSize, model);
 
-      console.log('Refresh analysis result:', result);
-
-      // 处理分析结果
       if (result && result.success) {
-        // 打印获取到的数据到console
-        console.log('=== 刷新技术分析数据 ===');
-        console.log('完整结果:', result);
-        console.log('技术指标:', result.indicators);
-        console.log('交易信号:', result.signals);
-        console.log('K线数据:', result.candles);
-        console.log('K线数据条数:', result.candles?.length || 0);
-        if (result.ai_analysis) {
-          console.log('AI分析:', result.ai_analysis);
-        }
-        console.log('==================');
-
-        // 设置技术分析结果（包含 indicators 和 signals）
         setAnalysisResult(result);
-
-        // 如果有AI分析结果，设置AI分析结果
         if (result.ai_analysis) {
           setAiAnalysisResult(result);
           setAiAnalysisDrawerVisible(true);
         }
-
         message.success('数据已刷新');
       } else {
-        // 处理错误
         let errorMsg = result?.message || '刷新失败';
-
-        // 如果有错误代码，显示更详细的错误信息
-        if (result?.error_code) {
-          if (result.error_code === 200) {
-            errorMsg = `股票代码 "${currentSymbol}" 不存在或无权限查询，请检查代码是否正确`;
-          } else {
-            errorMsg = `错误[${result.error_code}]: ${result.message}`;
-          }
+        if (result?.error_code === 200) {
+          errorMsg = `股票代码 "${currentSymbol}" 不存在或无权限查询，请检查代码是否正确`;
+        } else if (result?.error_code) {
+          errorMsg = `错误[${result.error_code}]: ${result.message}`;
         }
-
-        message.error(errorMsg, 5); // 显示5秒
+        message.error(errorMsg, 5);
       }
     } catch (error: any) {
       message.error(error.message || '刷新失败');
@@ -466,14 +298,10 @@ const MainPage: React.FC = () => {
    * 防抖刷新热门股票列表
    */
   const debouncedRefreshHotStocks = (): void => {
-    // 清除之前的定时器
     if (refreshTimerRef.current) {
       clearTimeout(refreshTimerRef.current);
     }
-    // 设置新的定时器，300ms后刷新
-    refreshTimerRef.current = setTimeout(() => {
-      loadHotStocks();
-    }, 300);
+    refreshTimerRef.current = setTimeout(() => loadHotStocks(), 300);
   };
 
   /**
@@ -487,96 +315,24 @@ const MainPage: React.FC = () => {
       }
     } catch (error: any) {
       console.error('加载指标解释失败:', error);
-      // 失败时不影响使用
     }
-  };
-
-  /**
-   * 创建指标知识讲解的Popover内容
-   */
-  const createIndicatorKnowledgeContent = (indicatorKey: string): React.ReactNode => {
-    const info = indicatorInfoMap[indicatorKey];
-    if (!info) return null;
-
-    return (
-      <div style={{ maxWidth: 400, fontSize: 13, paddingTop: 0 }}>
-        <Title level={5} style={{ marginTop: 0, marginBottom: 0, fontSize: 14 }}>
-          {info.name}
-        </Title>
-        <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
-          <strong>说明：</strong>{info.description}
-        </Text>
-        {info.calculation && (
-          <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
-            <strong>计算方法：</strong>{info.calculation}
-          </Text>
-        )}
-        {info.reference_range && Object.keys(info.reference_range).length > 0 && (
-          <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
-            <strong>参考范围：</strong>
-            <ul style={{ marginTop: 4, marginBottom: 0, paddingLeft: 20 }}>
-              {Object.entries(info.reference_range).map(([key, value]) => (
-                <li key={key} style={{ marginBottom: 4 }}>{value}</li>
-              ))}
-            </ul>
-          </Text>
-        )}
-        {info.interpretation && (
-          <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
-            <strong>解读：</strong>{info.interpretation}
-          </Text>
-        )}
-        {info.usage && (
-          <Text style={{ display: 'block', marginTop: 8, marginBottom: 0 }}>
-            <strong>使用方法：</strong>{info.usage}
-          </Text>
-        )}
-      </div>
-    );
   };
 
   /**
    * 创建带知识讲解的指标标签
    */
   const createIndicatorLabel = (label: string, indicatorKey: string): React.ReactNode => {
-    const info = indicatorInfoMap[indicatorKey];
-    if (!info) return label;
-
-    return (
-      <Space>
-        <span>{label}</span>
-        <Popover
-          content={createIndicatorKnowledgeContent(indicatorKey)}
-          title={null}
-          trigger="click"
-          placement="right"
-          styles={{ body: { paddingTop: 8, paddingBottom: 12 } }}
-        >
-          <QuestionCircleOutlined
-            style={{
-              color: '#1890ff',
-              cursor: 'pointer',
-              fontSize: 12,
-            }}
-          />
-        </Popover>
-      </Space>
-    );
+    return <IndicatorLabel label={label} indicatorKey={indicatorKey} indicatorInfoMap={indicatorInfoMap} />;
   };
 
   useEffect(() => {
-    // 只在组件挂载时加载一次，不自动刷新
-    // loadPositions(); // 已隐藏持仓功能
-    // loadOrders(); // 已隐藏交易功能
     loadHotStocks();
     loadIndicatorInfo();
 
-    // 监听窗口大小变化，更新移动端状态
     const handleResize = () => {
       const width = window.innerWidth;
       setIsMobile(width <= 768);
       
-      // 禁用移动端缩放
       if (width <= 768) {
         const viewport = document.querySelector('meta[name="viewport"]');
         if (viewport) {
@@ -585,12 +341,9 @@ const MainPage: React.FC = () => {
       }
     };
     
-    // 初始化移动端检测
     handleResize();
-
     window.addEventListener('resize', handleResize);
 
-    // 组件卸载时清理定时器和事件监听器
     return () => {
       if (refreshTimerRef.current) {
         clearTimeout(refreshTimerRef.current);
@@ -600,163 +353,26 @@ const MainPage: React.FC = () => {
   }, []);
 
   /**
-   * 持仓表格列定义
-   */
-  const positionColumns = [
-    {
-      title: '代码',
-      dataIndex: 'symbol',
-      key: 'symbol',
-      render: (text: string) => <strong>{text}</strong>,
-    },
-    {
-      title: '数量',
-      dataIndex: 'position',
-      key: 'position',
-      render: (value: number | undefined) => value?.toFixed(0) || 0,
-    },
-    {
-      title: '市价',
-      dataIndex: 'marketPrice',
-      key: 'marketPrice',
-      render: (value: number | undefined) => `$${value?.toFixed(2) || '0.00'}`,
-    },
-    {
-      title: '市值',
-      dataIndex: 'marketValue',
-      key: 'marketValue',
-      render: (value: number | undefined) => `$${value?.toFixed(2) || '0.00'}`,
-    },
-    {
-      title: '成本',
-      dataIndex: 'averageCost',
-      key: 'averageCost',
-      render: (value: number | undefined) => `$${value?.toFixed(2) || '0.00'}`,
-    },
-    {
-      title: '盈亏',
-      dataIndex: 'unrealizedPNL',
-      key: 'unrealizedPNL',
-      render: (value: number | undefined) => {
-        const pnl = value || 0;
-        return (
-          <Tag color={pnl >= 0 ? 'success' : 'error'}>
-            ${pnl.toFixed(2)}
-          </Tag>
-        );
-      },
-    },
-  ];
-
-  /**
-   * 订单表格列定义
-   */
-  const orderColumns = [
-    {
-      title: '订单ID',
-      dataIndex: 'orderId',
-      key: 'orderId',
-      render: (id: number) => `#${id}`,
-    },
-    {
-      title: '代码',
-      dataIndex: 'symbol',
-      key: 'symbol',
-    },
-    {
-      title: '方向',
-      dataIndex: 'action',
-      key: 'action',
-      render: (action: string) => (
-        <Tag color={action === 'BUY' ? 'green' : 'red'}>
-          {action === 'BUY' ? '买入' : '卖出'}
-        </Tag>
-      ),
-    },
-    {
-      title: '数量',
-      dataIndex: 'totalQuantity',
-      key: 'totalQuantity',
-      render: (qty: number | undefined) => qty?.toFixed(0) || 0,
-    },
-    {
-      title: '类型',
-      dataIndex: 'orderType',
-      key: 'orderType',
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      render: (status: string) => {
-        const statusMap: Record<string, { color: string; text: string }> = {
-          'Filled': { color: 'success', text: '已成交' },
-          'Cancelled': { color: 'default', text: '已取消' },
-          'Submitted': { color: 'processing', text: '已提交' },
-          'PreSubmitted': { color: 'warning', text: '预提交' },
-        };
-        const config = statusMap[status] || { color: 'default', text: status };
-        return <Tag color={config.color}>{config.text}</Tag>;
-      },
-    },
-    {
-      title: '已成交',
-      dataIndex: 'filled',
-      key: 'filled',
-      render: (filled: number | undefined) => filled?.toFixed(0) || 0,
-    },
-    {
-      title: '操作',
-      key: 'action',
-      render: (_: any, record: Order) => (
-        record.status !== 'Filled' && record.status !== 'Cancelled' ? (
-          <Button
-            type="link"
-            danger
-            icon={<CloseCircleOutlined />}
-            onClick={() => handleCancelOrder(record.order_id)}
-          >
-            撤销
-          </Button>
-        ) : null
-      ),
-    },
-  ];
-
-  /**
-   * 格式化数值
-   */
-  const formatValue = (value: number | undefined, decimals: number = 2): string => {
-    if (value === undefined || value === null) return 'N/A';
-    return typeof value === 'number' ? value.toFixed(decimals) : String(value);
-  };
-
-  /**
    * 获取趋势标签
    */
   const getTrendTag = (direction: string | undefined): React.ReactNode => {
-    const trendMap: Record<string, { color: string; text: string; icon: React.ReactNode }> = {
-      'up': { color: 'success', text: '上涨', icon: <RiseOutlined /> },
-      'down': { color: 'error', text: '下跌', icon: <FallOutlined /> },
-      'neutral': { color: 'default', text: '震荡', icon: <RightOutlined /> },
-    };
-    const config = direction ? (trendMap[direction] || { color: 'default', text: direction, icon: null }) : { color: 'default', text: '未知', icon: null };
+    const config = direction && statusMaps.trend[direction as keyof typeof statusMaps.trend]
+      ? statusMaps.trend[direction as keyof typeof statusMaps.trend]
+      : { color: 'default', text: direction || '未知' };
+    
+    const icon = direction === 'up' ? <RiseOutlined /> :
+                 direction === 'down' ? <FallOutlined /> :
+                 direction === 'neutral' ? <RightOutlined /> : null;
+    
     return (
       <Tag color={config.color}>
-        {config.icon} {config.text}
+        {icon} {config.text}
       </Tag>
     );
   };
 
-  /**
-   * 获取RSI状态
-   */
-  const getRSIStatus = (rsi: number | undefined): { color: string; text: string } => {
-    if (!rsi) return { color: 'default', text: '中性' };
-    if (rsi < 30) return { color: 'success', text: '超卖' };
-    if (rsi > 70) return { color: 'error', text: '超买' };
-    return { color: 'default', text: '中性' };
-  };
+  const positionColumns = getPositionColumns();
+  const orderColumns = getOrderColumns(handleCancelOrder);
 
   return (
     <div className="main-page">
@@ -897,46 +513,6 @@ const MainPage: React.FC = () => {
                           >
                         刷新
                           </Button>
-                      <Button
-                        type="primary"
-                        size="small"
-                        icon={<RobotOutlined />}
-                        onClick={() => {
-                        if (!currentSymbol) {
-                          message.warning('请先进行一次分析');
-                          return;
-                        }
-                        // 设置默认值
-                        tradingPlanForm.setFieldsValue({
-                          planning_period: '未来2周',
-                          allow_day_trading: false,
-                          current_position_percent: 0,
-                          current_position_cost: 0,
-                          current_position_quantity: 0,
-                          account_value: 100000,
-                          risk_percent: 2.0,
-                        });
-                        setTradingPlanDrawerVisible(true);
-                      }}
-                      >
-                        交易规划
-                      </Button>
-                      <Button
-                        type="default"
-                        size="small"
-                        icon={<BarChartOutlined />}
-                        onClick={() => {
-                          if (!currentSymbol) {
-                            message.warning('请先进行一次分析');
-                            return;
-                          }
-                          setBacktestDrawerVisible(true);
-                          setBacktestResult(null);
-                          backtestForm.resetFields();
-                        }}
-                      >
-                        回测
-                      </Button>
                     </Space>
                     
                     <Descriptions
@@ -1706,15 +1282,9 @@ const MainPage: React.FC = () => {
                               });
 
                               if (signals.risk) {
-                                const riskLevel = signals.risk.level || 'unknown';
-                                const riskMap: Record<string, { color: string; text: string }> = {
-                                  'very_low': { color: 'success', text: '很低风险' },
-                                  'low': { color: 'success', text: '低风险' },
-                                  'medium': { color: 'warning', text: '中等风险' },
-                                  'high': { color: 'error', text: '高风险' },
-                                  'very_high': { color: 'error', text: '极高风险' },
-                                };
-                                const config = riskMap[String(riskLevel)] || { color: 'default', text: '未知' };
+                                const riskLevel = String(signals.risk.level || 'unknown');
+                                const config = statusMaps.risk[riskLevel as keyof typeof statusMaps.risk] || 
+                                  { color: 'default', text: '未知' };
                                 items.push({
                                   label: '风险等级',
                                   span: 1,
@@ -1838,38 +1408,18 @@ const MainPage: React.FC = () => {
 
                                 if (fd.SharesOutstanding) {
                                   const shares = parseFloat(String(fd.SharesOutstanding));
-                                  let sharesText = '';
-                                  if (shares >= 1e9) {
-                                    sharesText = `${(shares / 1e9).toFixed(2)}B`;
-                                  } else if (shares >= 1e6) {
-                                    sharesText = `${(shares / 1e6).toFixed(2)}M`;
-                                  } else {
-                                    sharesText = shares.toFixed(0);
-                                  }
                                   items.push({
                                     label: createIndicatorLabel('流通股数', 'fundamental'),
                                     span: 1,
-                                    children: sharesText,
+                                    children: formatLargeNumber(shares).replace('$', ''),
                                   });
                                 }
 
-                                // 市值与价格
                                 if (fd.MarketCap) {
-                                  const mcap = parseFloat(String(fd.MarketCap));
-                                  let mcapText = '';
-                                  if (mcap >= 1e12) {
-                                    mcapText = `$${(mcap / 1e12).toFixed(2)}T`;
-                                  } else if (mcap >= 1e9) {
-                                    mcapText = `$${(mcap / 1e9).toFixed(2)}B`;
-                                  } else if (mcap >= 1e6) {
-                                    mcapText = `$${(mcap / 1e6).toFixed(2)}M`;
-                                  } else {
-                                    mcapText = `$${mcap.toFixed(2)}`;
-                                  }
                                   items.push({
                                     label: createIndicatorLabel('市值', 'market_cap'),
                                     span: 1,
-                                    children: mcapText,
+                                    children: formatLargeNumber(parseFloat(String(fd.MarketCap))),
                                   });
                                 }
 
@@ -1889,55 +1439,27 @@ const MainPage: React.FC = () => {
                                   });
                                 }
 
-                                // 财务指标
                                 if (fd.RevenueTTM) {
-                                  const revenue = parseFloat(String(fd.RevenueTTM));
-                                  let revenueText = '';
-                                  if (revenue >= 1e9) {
-                                    revenueText = `$${(revenue / 1e9).toFixed(2)}B`;
-                                  } else if (revenue >= 1e6) {
-                                    revenueText = `$${(revenue / 1e6).toFixed(2)}M`;
-                                  } else {
-                                    revenueText = `$${revenue.toFixed(2)}`;
-                                  }
                                   items.push({
                                     label: createIndicatorLabel('营收(TTM)', 'revenue'),
                                     span: 1,
-                                    children: revenueText,
+                                    children: formatLargeNumber(parseFloat(String(fd.RevenueTTM))),
                                   });
                                 }
 
                                 if (fd.NetIncomeTTM) {
-                                  const income = parseFloat(String(fd.NetIncomeTTM));
-                                  let incomeText = '';
-                                  if (income >= 1e9) {
-                                    incomeText = `$${(income / 1e9).toFixed(2)}B`;
-                                  } else if (income >= 1e6) {
-                                    incomeText = `$${(income / 1e6).toFixed(2)}M`;
-                                  } else {
-                                    incomeText = `$${income.toFixed(2)}`;
-                                  }
                                   items.push({
                                     label: createIndicatorLabel('净利润(TTM)', 'fundamental'),
                                     span: 1,
-                                    children: incomeText,
+                                    children: formatLargeNumber(parseFloat(String(fd.NetIncomeTTM))),
                                   });
                                 }
 
                                 if (fd.EBITDATTM) {
-                                  const ebitda = parseFloat(String(fd.EBITDATTM));
-                                  let ebitdaText = '';
-                                  if (ebitda >= 1e9) {
-                                    ebitdaText = `$${(ebitda / 1e9).toFixed(2)}B`;
-                                  } else if (ebitda >= 1e6) {
-                                    ebitdaText = `$${(ebitda / 1e6).toFixed(2)}M`;
-                                  } else {
-                                    ebitdaText = `$${ebitda.toFixed(2)}`;
-                                  }
                                   items.push({
                                     label: createIndicatorLabel('EBITDA(TTM)', 'fundamental'),
                                     span: 1,
-                                    children: ebitdaText,
+                                    children: formatLargeNumber(parseFloat(String(fd.EBITDATTM))),
                                   });
                                 }
 
@@ -2073,15 +1595,8 @@ const MainPage: React.FC = () => {
                                 }
 
                                 if (fd.ConsensusRecommendation) {
-                                  const consensus = fd.ConsensusRecommendation;
-                                  const consensusMap: Record<string, { text: string; color: string }> = {
-                                    '1': { text: '强烈买入', color: 'success' },
-                                    '2': { text: '买入', color: 'success' },
-                                    '3': { text: '持有', color: 'default' },
-                                    '4': { text: '卖出', color: 'error' },
-                                    '5': { text: '强烈卖出', color: 'error' },
-                                  };
-                                  const config = consensusMap[String(consensus)] || { text: String(consensus), color: 'default' };
+                                  const config = statusMaps.consensus[String(fd.ConsensusRecommendation) as keyof typeof statusMaps.consensus] || 
+                                    { text: String(fd.ConsensusRecommendation), color: 'default' };
                                   items.push({
                                     label: createIndicatorLabel('共识评级', 'fundamental'),
                                     span: 1,
@@ -2126,229 +1641,33 @@ const MainPage: React.FC = () => {
                               <Tabs
                                 defaultActiveKey="annual-financials"
                                 items={[
-                                  // 年度财务报表
-                                  (analysisResult.indicators.fundamental_data?.Financials && 
-                                   Array.isArray(analysisResult.indicators.fundamental_data.Financials) &&
-                                   analysisResult.indicators.fundamental_data.Financials.length > 0) ? {
+                                  analysisResult.indicators.fundamental_data?.Financials && 
+                                  Array.isArray(analysisResult.indicators.fundamental_data.Financials) &&
+                                  analysisResult.indicators.fundamental_data.Financials.length > 0 ? {
                                     key: 'annual-financials',
                                     label: '年度财务报表',
-                                    children: (
-                                      <Table
-                                        size="small"
-                                        bordered
-                                        dataSource={analysisResult.indicators.fundamental_data.Financials.map((record: any, index: number) => ({
-                                          key: index,
-                                          ...record,
-                                        }))}
-                                        columns={(() => {
-                                          if (!analysisResult.indicators.fundamental_data?.Financials || 
-                                              !Array.isArray(analysisResult.indicators.fundamental_data.Financials) ||
-                                              analysisResult.indicators.fundamental_data.Financials.length === 0) {
-                                            return [];
-                                          }
-                                          const firstRecord = analysisResult.indicators.fundamental_data.Financials[0];
-                                          const dateCol = firstRecord.index || firstRecord.Date ? {
-                                            title: '日期',
-                                            dataIndex: firstRecord.index ? 'index' : 'Date',
-                                            key: 'date',
-                                            width: 120,
-                                            fixed: 'left' as const,
-                                          } : null;
-                                          const otherCols = Object.keys(firstRecord)
-                                            .filter(key => key !== 'index' && key !== 'Date')
-                                            .map(key => ({
-                                              title: key,
-                                              dataIndex: key,
-                                              key: key,
-                                              render: (value: any) => {
-                                                if (value === null || value === undefined || value === '') return '-';
-                                                const num = parseFloat(value);
-                                                if (!isNaN(num)) {
-                                                  if (Math.abs(num) >= 1e9) {
-                                                    return `$${(num / 1e9).toFixed(2)}B`;
-                                                  } else if (Math.abs(num) >= 1e6) {
-                                                    return `$${(num / 1e6).toFixed(2)}M`;
-                                                  } else {
-                                                    return `$${num.toFixed(2)}`;
-                                                  }
-                                                }
-                                                return value;
-                                              },
-                                            }));
-                                          return dateCol ? [dateCol, ...otherCols] : otherCols;
-                                        })()}
-                                        scroll={{ x: 'max-content' }}
-                                        pagination={false}
-                                      />
-                                    ),
+                                    children: <FinancialTable data={analysisResult.indicators.fundamental_data.Financials} />,
                                   } : null,
-                                  // 季度财务报表
-                                  (analysisResult.indicators.fundamental_data?.QuarterlyFinancials && 
-                                   Array.isArray(analysisResult.indicators.fundamental_data.QuarterlyFinancials) &&
-                                   analysisResult.indicators.fundamental_data.QuarterlyFinancials.length > 0) ? {
+                                  analysisResult.indicators.fundamental_data?.QuarterlyFinancials && 
+                                  Array.isArray(analysisResult.indicators.fundamental_data.QuarterlyFinancials) &&
+                                  analysisResult.indicators.fundamental_data.QuarterlyFinancials.length > 0 ? {
                                     key: 'quarterly-financials',
                                     label: '季度财务报表',
-                                    children: (
-                                      <Table
-                                        size="small"
-                                        bordered
-                                        dataSource={analysisResult.indicators.fundamental_data.QuarterlyFinancials.map((record: any, index: number) => ({
-                                          key: index,
-                                          ...record,
-                                        }))}
-                                        columns={(() => {
-                                          if (!analysisResult.indicators.fundamental_data?.QuarterlyFinancials || 
-                                              !Array.isArray(analysisResult.indicators.fundamental_data.QuarterlyFinancials) ||
-                                              analysisResult.indicators.fundamental_data.QuarterlyFinancials.length === 0) {
-                                            return [];
-                                          }
-                                          const firstRecord = analysisResult.indicators.fundamental_data.QuarterlyFinancials[0];
-                                          const dateCol = firstRecord.index || firstRecord.Date ? {
-                                            title: '日期',
-                                            dataIndex: firstRecord.index ? 'index' : 'Date',
-                                            key: 'date',
-                                            width: 120,
-                                            fixed: 'left' as const,
-                                          } : null;
-                                          const otherCols = Object.keys(firstRecord)
-                                            .filter(key => key !== 'index' && key !== 'Date')
-                                            .map(key => ({
-                                              title: key,
-                                              dataIndex: key,
-                                              key: key,
-                                              render: (value: any) => {
-                                                if (value === null || value === undefined || value === '') return '-';
-                                                const num = parseFloat(value);
-                                                if (!isNaN(num)) {
-                                                  if (Math.abs(num) >= 1e9) {
-                                                    return `$${(num / 1e9).toFixed(2)}B`;
-                                                  } else if (Math.abs(num) >= 1e6) {
-                                                    return `$${(num / 1e6).toFixed(2)}M`;
-                                                  } else {
-                                                    return `$${num.toFixed(2)}`;
-                                                  }
-                                                }
-                                                return value;
-                                              },
-                                            }));
-                                          return dateCol ? [dateCol, ...otherCols] : otherCols;
-                                        })()}
-                                        scroll={{ x: 'max-content' }}
-                                        pagination={false}
-                                      />
-                                    ),
+                                    children: <FinancialTable data={analysisResult.indicators.fundamental_data.QuarterlyFinancials} />,
                                   } : null,
-                                  // 资产负债表
-                                  (analysisResult.indicators.fundamental_data?.BalanceSheet && 
-                                   Array.isArray(analysisResult.indicators.fundamental_data.BalanceSheet) &&
-                                   analysisResult.indicators.fundamental_data.BalanceSheet.length > 0) ? {
+                                  analysisResult.indicators.fundamental_data?.BalanceSheet && 
+                                  Array.isArray(analysisResult.indicators.fundamental_data.BalanceSheet) &&
+                                  analysisResult.indicators.fundamental_data.BalanceSheet.length > 0 ? {
                                     key: 'balance-sheet',
                                     label: '资产负债表',
-                                    children: (
-                                      <Table
-                                        size="small"
-                                        bordered
-                                        dataSource={analysisResult.indicators.fundamental_data.BalanceSheet.map((record: any, index: number) => ({
-                                          key: index,
-                                          ...record,
-                                        }))}
-                                        columns={(() => {
-                                          if (!analysisResult.indicators.fundamental_data?.BalanceSheet || 
-                                              !Array.isArray(analysisResult.indicators.fundamental_data.BalanceSheet) ||
-                                              analysisResult.indicators.fundamental_data.BalanceSheet.length === 0) {
-                                            return [];
-                                          }
-                                          const firstRecord = analysisResult.indicators.fundamental_data.BalanceSheet[0];
-                                          const dateCol = firstRecord.index || firstRecord.Date ? {
-                                            title: '日期',
-                                            dataIndex: firstRecord.index ? 'index' : 'Date',
-                                            key: 'date',
-                                            width: 120,
-                                            fixed: 'left' as const,
-                                          } : null;
-                                          const otherCols = Object.keys(firstRecord)
-                                            .filter(key => key !== 'index' && key !== 'Date')
-                                            .map(key => ({
-                                              title: key,
-                                              dataIndex: key,
-                                              key: key,
-                                              render: (value: any) => {
-                                                if (value === null || value === undefined || value === '') return '-';
-                                                const num = parseFloat(value);
-                                                if (!isNaN(num)) {
-                                                  if (Math.abs(num) >= 1e9) {
-                                                    return `$${(num / 1e9).toFixed(2)}B`;
-                                                  } else if (Math.abs(num) >= 1e6) {
-                                                    return `$${(num / 1e6).toFixed(2)}M`;
-                                                  } else {
-                                                    return `$${num.toFixed(2)}`;
-                                                  }
-                                                }
-                                                return value;
-                                              },
-                                            }));
-                                          return dateCol ? [dateCol, ...otherCols] : otherCols;
-                                        })()}
-                                        scroll={{ x: 'max-content' }}
-                                        pagination={false}
-                                      />
-                                    ),
+                                    children: <FinancialTable data={analysisResult.indicators.fundamental_data.BalanceSheet} />,
                                   } : null,
-                                  // 现金流量表
-                                  (analysisResult.indicators.fundamental_data?.Cashflow && 
-                                   Array.isArray(analysisResult.indicators.fundamental_data.Cashflow) &&
-                                   analysisResult.indicators.fundamental_data.Cashflow.length > 0) ? {
+                                  analysisResult.indicators.fundamental_data?.Cashflow && 
+                                  Array.isArray(analysisResult.indicators.fundamental_data.Cashflow) &&
+                                  analysisResult.indicators.fundamental_data.Cashflow.length > 0 ? {
                                     key: 'cashflow',
                                     label: '现金流量表',
-                                    children: (
-                                      <Table
-                                        size="small"
-                                        bordered
-                                        dataSource={analysisResult.indicators.fundamental_data.Cashflow.map((record: any, index: number) => ({
-                                          key: index,
-                                          ...record,
-                                        }))}
-                                        columns={(() => {
-                                          if (!analysisResult.indicators.fundamental_data?.Cashflow || 
-                                              !Array.isArray(analysisResult.indicators.fundamental_data.Cashflow) ||
-                                              analysisResult.indicators.fundamental_data.Cashflow.length === 0) {
-                                            return [];
-                                          }
-                                          const firstRecord = analysisResult.indicators.fundamental_data.Cashflow[0];
-                                          const dateCol = firstRecord.index || firstRecord.Date ? {
-                                            title: '日期',
-                                            dataIndex: firstRecord.index ? 'index' : 'Date',
-                                            key: 'date',
-                                            width: 120,
-                                            fixed: 'left' as const,
-                                          } : null;
-                                          const otherCols = Object.keys(firstRecord)
-                                            .filter(key => key !== 'index' && key !== 'Date')
-                                            .map(key => ({
-                                              title: key,
-                                              dataIndex: key,
-                                              key: key,
-                                              render: (value: any) => {
-                                                if (value === null || value === undefined || value === '') return '-';
-                                                const num = parseFloat(value);
-                                                if (!isNaN(num)) {
-                                                  if (Math.abs(num) >= 1e9) {
-                                                    return `$${(num / 1e9).toFixed(2)}B`;
-                                                  } else if (Math.abs(num) >= 1e6) {
-                                                    return `$${(num / 1e6).toFixed(2)}M`;
-                                                  } else {
-                                                    return `$${num.toFixed(2)}`;
-                                                  }
-                                                }
-                                                return value;
-                                              },
-                                            }));
-                                          return dateCol ? [dateCol, ...otherCols] : otherCols;
-                                        })()}
-                                        scroll={{ x: 'max-content' }}
-                                        pagination={false}
-                                      />
-                                    ),
+                                    children: <FinancialTable data={analysisResult.indicators.fundamental_data.Cashflow} />,
                                   } : null,
                                 ].filter((item): item is NonNullable<typeof item> => item !== null)}
                               />
@@ -2545,478 +1864,6 @@ const MainPage: React.FC = () => {
         )}
       </Drawer>
 
-      {/* 交易规划抽屉 */}
-      <Drawer
-        title={
-          <span>
-            <RobotOutlined style={{ marginRight: 8 }} />
-            交易规划 - {currentSymbol || '未选择股票'}
-          </span>
-        }
-        placement="right"
-        width={isMobile ? '100%' : 900}
-        onClose={() => {
-          setTradingPlanDrawerVisible(false);
-          setTradingPlanResult(null);
-        }}
-        open={tradingPlanDrawerVisible}
-        styles={{
-          body: {
-            padding: isMobile ? '12px' : '24px',
-          },
-        }}
-      >
-        {!tradingPlanResult ? (
-          <Form
-            form={tradingPlanForm}
-            layout="vertical"
-            onFinish={handleTradingPlanAnalysis}
-            initialValues={{
-              planning_period: '未来2周',
-              allow_day_trading: false,
-              current_position_percent: 0.0,
-            }}
-            onValuesChange={(changedValues) => {
-              if (changedValues.allow_day_trading !== undefined) {
-                setAllowDayTrading(changedValues.allow_day_trading);
-              }
-            }}
-          >
-            <Form.Item
-              label="规划周期"
-              name="planning_period"
-              rules={[
-                { required: true, message: '请输入规划周期描述' },
-              ]}
-              tooltip="描述规划的时间范围，例如 '未来2周'、'未来1个月'、'未来10个交易日' 等"
-            >
-              <Input
-                style={{ width: '100%' }}
-                placeholder="例如: 未来2周"
-              />
-            </Form.Item>
-
-            <Form.Item
-              label="允许日内交易"
-              name="allow_day_trading"
-              valuePropName="checked"
-              tooltip="如果允许，可以在同一天买入并卖出；如果不允许，买入后需要至少持有到下一个交易日"
-            >
-              <div>
-                <Switch
-                  checkedChildren="允许"
-                  unCheckedChildren="不允许"
-                  onChange={(checked) => setAllowDayTrading(checked)}
-                />
-                <span style={{ marginLeft: 8, color: '#666' }}>
-                  {allowDayTrading 
-                    ? '可以在同一天买入并卖出' 
-                    : '买入后需要至少持有到下一个交易日'}
-                </span>
-              </div>
-            </Form.Item>
-
-            <Form.Item
-              label="当前持有仓位"
-              name="current_position_percent"
-              rules={[
-                { required: true, message: '请输入当前持有仓位百分比' },
-                { type: 'number', min: 0, max: 100, message: '当前持有仓位百分比必须在0-100之间' },
-              ]}
-              tooltip="输入您当前已经持有该股票占总资金的百分比，0%表示未持仓，100%表示全部资金都持有该股票"
-            >
-              <InputNumber
-                min={0}
-                max={100}
-                step={0.1}
-                precision={1}
-                style={{ width: '100%' }}
-                placeholder="例如: 0.0 (未持仓) 或 20.0 (持有20%)"
-                addonAfter="%"
-              />
-            </Form.Item>
-
-            <Form.Item>
-              <Space>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  loading={tradingPlanLoading}
-                  icon={<RobotOutlined />}
-                >
-                  生成交易操作计划
-                </Button>
-                <Button onClick={() => setTradingPlanDrawerVisible(false)}>
-                  取消
-                </Button>
-              </Space>
-            </Form.Item>
-          </Form>
-        ) : (
-          <div>
-            <Space direction="vertical" style={{ width: '100%' }} size="large">
-              <div>
-                <Text strong>分析配置:</Text>
-                <div style={{ marginTop: 8 }}>
-                  <Text>规划周期: </Text>
-                  <Text strong>{tradingPlanResult.planning_period || '未来2周'}</Text>
-                </div>
-                <div>
-                  <Text>允许日内交易: </Text>
-                  <Text strong>{tradingPlanResult.allow_day_trading ? '是' : '否'}</Text>
-                </div>
-                <div>
-                  <Text>当前持有仓位: </Text>
-                  <Text strong>{tradingPlanResult.current_position_percent || 0.0}%</Text>
-                </div>
-              </div>
-
-              {tradingPlanResult.trading_plan && (
-                <div style={{
-                  fontSize: 14,
-                  lineHeight: '1.8',
-                  padding: '16px',
-                  background: '#f5f5f5',
-                  borderRadius: '4px',
-                }}>
-                  <ReactMarkdown>{tradingPlanResult.trading_plan}</ReactMarkdown>
-                </div>
-              )}
-
-              <Button
-                onClick={() => {
-                  setTradingPlanResult(null);
-                  tradingPlanForm.resetFields();
-                }}
-              >
-                重新配置
-              </Button>
-            </Space>
-          </div>
-        )}
-      </Drawer>
-
-      {/* 回测抽屉 */}
-      <Drawer
-        title={
-          <span>
-            <BarChartOutlined style={{ marginRight: 8 }} />
-            回测 - {currentSymbol || '未选择股票'}
-          </span>
-        }
-        placement="right"
-        width={isMobile ? '100%' : 900}
-        onClose={() => {
-          setBacktestDrawerVisible(false);
-          setBacktestResult(null);
-          backtestForm.resetFields();
-        }}
-        open={backtestDrawerVisible}
-        styles={{
-          body: {
-            padding: isMobile ? '12px' : '24px',
-          },
-        }}
-      >
-        {!backtestResult ? (
-          <Form
-            form={backtestForm}
-            layout="vertical"
-            onFinish={handleBacktest}
-            initialValues={{
-              end_date: dayjs().subtract(14, 'day'),
-              planning_period: '未来2周',
-              allow_day_trading: false,
-              current_position_percent: 0.0,
-              account_value: 100000,
-              risk_percent: 2.0,
-            }}
-          >
-            <Form.Item
-              label="回测结束日期"
-              name="end_date"
-              rules={[
-                { required: true, message: '请选择回测结束日期' },
-              ]}
-              tooltip="选择历史日期作为回测截止点，系统将基于该日期之前的数据进行分析预测，然后对比该日期之后的实际结果"
-            >
-              <DatePicker
-                style={{ width: '100%' }}
-                format="YYYY-MM-DD"
-                disabledDate={(current) => {
-                  // 不能选择未来日期
-                  return current && current > dayjs().endOf('day');
-                }}
-              />
-            </Form.Item>
-
-            <Form.Item
-              label="规划周期"
-              name="planning_period"
-              rules={[
-                { required: true, message: '请输入规划周期描述' },
-              ]}
-              tooltip="描述规划的时间范围，例如 '未来2周'、'未来1个月' 等"
-            >
-              <Input
-                style={{ width: '100%' }}
-                placeholder="例如: 未来2周"
-              />
-            </Form.Item>
-
-            <Form.Item
-              label="允许日内交易"
-              name="allow_day_trading"
-              valuePropName="checked"
-            >
-              <Switch
-                checkedChildren="允许"
-                unCheckedChildren="不允许"
-              />
-            </Form.Item>
-
-            <Divider orientation="left">持仓信息</Divider>
-
-            <Form.Item
-              label="当前持有仓位"
-              name="current_position_percent"
-              rules={[
-                { required: true, message: '请输入当前持有仓位百分比' },
-                { type: 'number', min: 0, max: 100, message: '当前持有仓位百分比必须在0-100之间' },
-              ]}
-            >
-              <InputNumber
-                min={0}
-                max={100}
-                step={0.1}
-                precision={1}
-                style={{ width: '100%' }}
-                placeholder="例如: 0.0"
-                addonAfter="%"
-              />
-            </Form.Item>
-
-            <Form.Item
-              label="持仓成本价"
-              name="current_position_cost"
-              tooltip="如果有持仓，输入持仓成本价（美元）"
-            >
-              <InputNumber
-                min={0}
-                step={0.01}
-                precision={2}
-                style={{ width: '100%' }}
-                placeholder="例如: 150.50"
-                addonBefore="$"
-              />
-            </Form.Item>
-
-            <Form.Item
-              label="持仓数量"
-              name="current_position_quantity"
-              tooltip="如果有持仓，输入持仓股数"
-            >
-              <InputNumber
-                min={0}
-                step={1}
-                precision={0}
-                style={{ width: '100%' }}
-                placeholder="例如: 100"
-                addonAfter="股"
-              />
-            </Form.Item>
-
-            <Divider orientation="left">账户设置</Divider>
-
-            <Form.Item
-              label="账户金额"
-              name="account_value"
-              rules={[
-                { required: true, message: '请输入账户金额' },
-                { type: 'number', min: 1000, message: '账户金额必须大于1000美元' },
-              ]}
-              tooltip="用于计算建议仓位大小"
-            >
-              <InputNumber
-                min={1000}
-                step={1000}
-                precision={0}
-                style={{ width: '100%' }}
-                placeholder="例如: 100000"
-                addonBefore="$"
-              />
-            </Form.Item>
-
-            <Form.Item
-              label="风险偏好"
-              name="risk_percent"
-              rules={[
-                { required: true, message: '请选择风险偏好' },
-                { type: 'number', min: 0.5, max: 10, message: '风险百分比必须在0.5-10之间' },
-              ]}
-              tooltip="单笔交易愿意承受的最大风险百分比（保守1%，适中2%，激进3-5%）"
-            >
-              <InputNumber
-                min={0.5}
-                max={10}
-                step={0.5}
-                precision={1}
-                style={{ width: '100%' }}
-                placeholder="例如: 2.0"
-                addonAfter="%"
-              />
-            </Form.Item>
-
-            <Form.Item>
-              <Space>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  loading={backtestLoading}
-                  icon={<BarChartOutlined />}
-                >
-                  开始回测
-                </Button>
-                <Button onClick={() => {
-                  setBacktestDrawerVisible(false);
-                  setBacktestResult(null);
-                  backtestForm.resetFields();
-                }}>
-                  取消
-                </Button>
-              </Space>
-            </Form.Item>
-          </Form>
-        ) : (
-          <div>
-            <Space direction="vertical" style={{ width: '100%' }} size="large">
-              {/* 回测配置信息 */}
-              <Card size="small" title="回测配置">
-                <Space direction="vertical" style={{ width: '100%' }}>
-                  <div>
-                    <Text>回测结束日期: </Text>
-                    <Text strong>{backtestResult.backtest_date}</Text>
-                  </div>
-                  {backtestResult.planning_period && (
-                    <div>
-                      <Text>规划周期: </Text>
-                      <Text strong>{backtestResult.planning_period}</Text>
-                    </div>
-                  )}
-                  <div>
-                    <Text>历史数据点: </Text>
-                    <Text strong>{backtestResult.historical_data_points}</Text>
-                  </div>
-                  <div>
-                    <Text>实际数据点: </Text>
-                    <Text strong>{backtestResult.actual_data_points}</Text>
-                  </div>
-                </Space>
-              </Card>
-
-              {/* 预测vs实际结果对比 */}
-              {backtestResult.actual_result && (
-                <Card size="small" title="预测 vs 实际结果对比">
-                  <Space direction="vertical" style={{ width: '100%' }} size="middle">
-                    <Divider orientation="left">价格对比</Divider>
-                    <Descriptions column={2} size="small">
-                      <Descriptions.Item label="回测日期价格">
-                        <Text strong>${backtestResult.actual_result.backtest_price.toFixed(2)}</Text>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="最终价格">
-                        <Text strong style={{
-                          color: backtestResult.actual_result.price_change_pct >= 0 ? '#3f8600' : '#cf1322'
-                        }}>
-                          ${backtestResult.actual_result.final_price.toFixed(2)}
-                          ({backtestResult.actual_result.price_change_pct >= 0 ? '+' : ''}
-                          {backtestResult.actual_result.price_change_pct.toFixed(2)}%)
-                        </Text>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="最高价格">
-                        <Text strong style={{ color: '#3f8600' }}>
-                          ${backtestResult.actual_result.max_price.toFixed(2)}
-                          ({backtestResult.actual_result.max_change_pct >= 0 ? '+' : ''}
-                          {backtestResult.actual_result.max_change_pct.toFixed(2)}%)
-                        </Text>
-                      </Descriptions.Item>
-                      <Descriptions.Item label="最低价格">
-                        <Text strong style={{ color: '#cf1322' }}>
-                          ${backtestResult.actual_result.min_price.toFixed(2)}
-                          ({backtestResult.actual_result.min_change_pct >= 0 ? '+' : ''}
-                          {backtestResult.actual_result.min_change_pct.toFixed(2)}%)
-                        </Text>
-                      </Descriptions.Item>
-                    </Descriptions>
-                    
-                    {(backtestResult.actual_result.days_passed !== undefined || 
-                      backtestResult.actual_result.up_days !== undefined) && (
-                      <>
-                        <Divider orientation="left">走势统计</Divider>
-                        <Descriptions column={2} size="small">
-                          {backtestResult.actual_result.days_passed !== undefined && (
-                            <Descriptions.Item label="回测至今">
-                              <Text strong>{backtestResult.actual_result.days_passed} 天</Text>
-                            </Descriptions.Item>
-                          )}
-                          {backtestResult.actual_result.up_days !== undefined && (
-                            <Descriptions.Item label="上涨天数">
-                              <Text strong style={{ color: '#3f8600' }}>
-                                {backtestResult.actual_result.up_days} 天
-                              </Text>
-                            </Descriptions.Item>
-                          )}
-                          {backtestResult.actual_result.down_days !== undefined && (
-                            <Descriptions.Item label="下跌天数">
-                              <Text strong style={{ color: '#cf1322' }}>
-                                {backtestResult.actual_result.down_days} 天
-                              </Text>
-                            </Descriptions.Item>
-                          )}
-                          {backtestResult.actual_result.avg_daily_change !== undefined && (
-                            <Descriptions.Item label="平均日涨跌幅">
-                              <Text strong style={{
-                                color: backtestResult.actual_result.avg_daily_change >= 0 ? '#3f8600' : '#cf1322'
-                              }}>
-                                {backtestResult.actual_result.avg_daily_change >= 0 ? '+' : ''}
-                                {backtestResult.actual_result.avg_daily_change.toFixed(2)}%
-                              </Text>
-                            </Descriptions.Item>
-                          )}
-                        </Descriptions>
-                      </>
-                    )}
-                  </Space>
-                </Card>
-              )}
-
-              {/* 预测交易规划 */}
-              {backtestResult.trading_plan && (
-                <Card size="small" title="预测交易规划">
-                  <div style={{
-                    fontSize: 14,
-                    lineHeight: '1.8',
-                    padding: '16px',
-                    background: '#f5f5f5',
-                    borderRadius: '4px',
-                  }}>
-                    <ReactMarkdown>{backtestResult.trading_plan}</ReactMarkdown>
-                  </div>
-                </Card>
-              )}
-
-              <Button
-                onClick={() => {
-                  setBacktestResult(null);
-                  backtestForm.resetFields();
-                }}
-              >
-                重新配置
-              </Button>
-            </Space>
-          </div>
-        )}
-      </Drawer>
-
       {/* AI分析拨号按钮 */}
       {aiAnalysisResult && (
         <FloatButton
@@ -3035,4 +1882,3 @@ const MainPage: React.FC = () => {
 };
 
 export default MainPage;
-
