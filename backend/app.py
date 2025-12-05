@@ -15,7 +15,12 @@ from .settings import (
     logger, init_database, get_cached_analysis, save_analysis_cache,
     save_stock_info, get_hot_stocks
 )
-from .yfinance import get_stock_info, get_historical_data
+from .yfinance import (
+    get_stock_info, get_historical_data, get_fundamental_data,
+    get_all_data, get_dividends, get_options, get_news,
+    get_institutional_holders, get_insider_transactions,
+    get_recommendations, get_earnings
+)
 from .analysis import (
     calculate_technical_indicators, generate_signals,
     check_ollama_available, perform_ai_analysis
@@ -24,6 +29,7 @@ from .utils import (
     format_candle_data, extract_stock_name,
     create_error_response, create_success_response
 )
+from .stock_analyzer import create_comprehensive_analysis
 
 # 创建Flask应用
 app = Flask(__name__)
@@ -75,8 +81,11 @@ def _perform_analysis(symbol: str, duration: str, bar_size: str, model: str, use
                 return cached_result, None
             if check_ollama_available():
                 try:
+                    # 获取额外数据用于AI分析
+                    extra_data = _get_extra_analysis_data(symbol)
                     ai_analysis = perform_ai_analysis(
-                        symbol, cached_result['indicators'], cached_result['signals'], duration, model
+                        symbol, cached_result['indicators'], cached_result['signals'], 
+                        duration, model, extra_data
                     )
                     cached_result['ai_analysis'] = ai_analysis
                     cached_result['model'] = model
@@ -105,21 +114,76 @@ def _perform_analysis(symbol: str, duration: str, bar_size: str, model: str, use
     signals = generate_signals(indicators)
     formatted_candles = format_candle_data(hist_data)
     
+    # 获取额外数据（股息、机构持仓等）
+    extra_data = _get_extra_analysis_data(symbol)
+    
     # 执行AI分析
     ai_analysis = None
     if check_ollama_available():
         logger.info("检测到 Ollama 可用，开始AI分析...")
         try:
-            ai_analysis = perform_ai_analysis(symbol, indicators, signals, duration, model)
+            ai_analysis = perform_ai_analysis(
+                symbol, indicators, signals, duration, model, extra_data
+            )
         except Exception as e:
             logger.warning(f"AI分析执行失败: {e}")
     else:
         logger.info("Ollama 不可用，跳过AI分析")
     
     result = create_success_response(indicators, signals, formatted_candles, ai_analysis, model)
+    
+    # 将额外数据添加到结果中
+    if extra_data:
+        result['extra_data'] = extra_data
+    
     save_analysis_cache(symbol, duration, bar_size, result)
     
     return result, None
+
+
+def _get_extra_analysis_data(symbol: str) -> dict:
+    """
+    获取用于AI分析的额外数据（股息、机构持仓、分析师推荐等）
+    """
+    extra_data = {}
+    
+    try:
+        # 获取股息数据
+        dividends = get_dividends(symbol)
+        if dividends:
+            extra_data['dividends'] = dividends[-10:]  # 最近10次分红
+            
+        # 获取机构持仓
+        institutional = get_institutional_holders(symbol)
+        if institutional:
+            extra_data['institutional_holders'] = institutional[:20]  # 前20大机构
+            
+        # 获取内部交易
+        insider = get_insider_transactions(symbol)
+        if insider:
+            extra_data['insider_transactions'] = insider[:15]  # 最近15笔
+            
+        # 获取分析师推荐
+        recommendations = get_recommendations(symbol)
+        if recommendations:
+            extra_data['analyst_recommendations'] = recommendations[:10]  # 最近10条
+            
+        # 获取收益数据
+        earnings = get_earnings(symbol)
+        if earnings:
+            extra_data['earnings'] = earnings
+            
+        # 获取新闻（简化版）
+        news = get_news(symbol, limit=5)
+        if news:
+            extra_data['news'] = news
+            
+        logger.info(f"已获取额外分析数据: {symbol}, 包含{len(extra_data)}个数据模块")
+        
+    except Exception as e:
+        logger.warning(f"获取额外数据失败: {symbol}, 错误: {e}")
+    
+    return extra_data
 
 
 @app.route('/api/health', methods=['GET'])
@@ -253,6 +317,319 @@ def get_indicator_info():
     })
 
 
+@app.route('/api/fundamental/<symbol>', methods=['GET'])
+def get_fundamental(symbol):
+    """
+    获取基本面数据
+    """
+    symbol_upper = symbol.upper()
+    logger.info(f"获取基本面数据: {symbol_upper}")
+    
+    try:
+        fundamental = get_fundamental_data(symbol_upper)
+        
+        if not fundamental:
+            return jsonify({
+                'success': False,
+                'message': f'无法获取 {symbol_upper} 的基本面数据'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'data': fundamental
+        })
+        
+    except Exception as e:
+        logger.error(f"获取基本面数据失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/dividends/<symbol>', methods=['GET'])
+def get_dividends_endpoint(symbol):
+    """
+    获取股息历史
+    """
+    symbol_upper = symbol.upper()
+    logger.info(f"获取股息历史: {symbol_upper}")
+    
+    try:
+        dividends = get_dividends(symbol_upper)
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'data': dividends if dividends else []
+        })
+        
+    except Exception as e:
+        logger.error(f"获取股息历史失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/institutional/<symbol>', methods=['GET'])
+def get_institutional_endpoint(symbol):
+    """
+    获取机构持仓信息
+    """
+    symbol_upper = symbol.upper()
+    logger.info(f"获取机构持仓: {symbol_upper}")
+    
+    try:
+        holders = get_institutional_holders(symbol_upper)
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'data': holders if holders else []
+        })
+        
+    except Exception as e:
+        logger.error(f"获取机构持仓失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/insider/<symbol>', methods=['GET'])
+def get_insider_endpoint(symbol):
+    """
+    获取内部交易信息
+    """
+    symbol_upper = symbol.upper()
+    logger.info(f"获取内部交易: {symbol_upper}")
+    
+    try:
+        transactions = get_insider_transactions(symbol_upper)
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'data': transactions if transactions else []
+        })
+        
+    except Exception as e:
+        logger.error(f"获取内部交易失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/recommendations/<symbol>', methods=['GET'])
+def get_recommendations_endpoint(symbol):
+    """
+    获取分析师推荐
+    """
+    symbol_upper = symbol.upper()
+    logger.info(f"获取分析师推荐: {symbol_upper}")
+    
+    try:
+        recommendations = get_recommendations(symbol_upper)
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'data': recommendations if recommendations else []
+        })
+        
+    except Exception as e:
+        logger.error(f"获取分析师推荐失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/earnings/<symbol>', methods=['GET'])
+def get_earnings_endpoint(symbol):
+    """
+    获取收益数据
+    """
+    symbol_upper = symbol.upper()
+    logger.info(f"获取收益数据: {symbol_upper}")
+    
+    try:
+        earnings = get_earnings(symbol_upper)
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'data': earnings if earnings else {}
+        })
+        
+    except Exception as e:
+        logger.error(f"获取收益数据失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/news/<symbol>', methods=['GET'])
+def get_news_endpoint(symbol):
+    """
+    获取股票新闻
+    查询参数:
+    - limit: 新闻数量限制 (默认: 10)
+    """
+    symbol_upper = symbol.upper()
+    limit = int(request.args.get('limit', 10))
+    logger.info(f"获取新闻: {symbol_upper}")
+    
+    try:
+        news = get_news(symbol_upper, limit=limit)
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'data': news if news else []
+        })
+        
+    except Exception as e:
+        logger.error(f"获取新闻失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/options/<symbol>', methods=['GET'])
+def get_options_endpoint(symbol):
+    """
+    获取期权数据
+    """
+    symbol_upper = symbol.upper()
+    logger.info(f"获取期权数据: {symbol_upper}")
+    
+    try:
+        options = get_options(symbol_upper)
+        
+        if not options:
+            return jsonify({
+                'success': False,
+                'message': f'{symbol_upper} 没有期权数据'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'data': options
+        })
+        
+    except Exception as e:
+        logger.error(f"获取期权数据失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/comprehensive/<symbol>', methods=['GET'])
+def comprehensive_analysis(symbol):
+    """
+    全面股票分析 - 整合所有数据的综合分析报告
+    查询参数:
+    - include_options: 是否包含期权数据 (默认: false)
+    - include_news: 是否包含新闻 (默认: true)
+    - news_limit: 新闻数量限制 (默认: 10)
+    """
+    symbol_upper = symbol.upper()
+    include_options = request.args.get('include_options', 'false').lower() == 'true'
+    include_news = request.args.get('include_news', 'true').lower() == 'true'
+    news_limit = int(request.args.get('news_limit', 10))
+    
+    logger.info(f"全面分析: {symbol_upper}")
+    
+    try:
+        # 获取所有数据
+        all_data = get_all_data(
+            symbol_upper, 
+            include_options=include_options,
+            include_news=include_news,
+            news_limit=news_limit
+        )
+        
+        if not all_data:
+            return jsonify({
+                'success': False,
+                'message': f'无法获取 {symbol_upper} 的数据'
+            }), 404
+        
+        # 执行全面分析
+        analysis = create_comprehensive_analysis(symbol_upper, all_data)
+        
+        if not analysis:
+            return jsonify({
+                'success': False,
+                'message': '分析失败'
+            }), 500
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'analysis': analysis
+        })
+        
+    except Exception as e:
+        logger.error(f"全面分析失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/all-data/<symbol>', methods=['GET'])
+def get_all_data_endpoint(symbol):
+    """
+    获取股票所有可用数据（原始数据，不做分析）
+    查询参数:
+    - include_options: 是否包含期权数据 (默认: false)
+    - include_news: 是否包含新闻 (默认: true)
+    - news_limit: 新闻数量限制 (默认: 10)
+    """
+    symbol_upper = symbol.upper()
+    include_options = request.args.get('include_options', 'false').lower() == 'true'
+    include_news = request.args.get('include_news', 'true').lower() == 'true'
+    news_limit = int(request.args.get('news_limit', 10))
+    
+    logger.info(f"获取所有数据: {symbol_upper}")
+    
+    try:
+        all_data = get_all_data(
+            symbol_upper,
+            include_options=include_options,
+            include_news=include_news,
+            news_limit=news_limit
+        )
+        
+        if not all_data:
+            return jsonify({
+                'success': False,
+                'message': f'无法获取 {symbol_upper} 的数据'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol_upper,
+            'data': all_data
+        })
+        
+    except Exception as e:
+        logger.error(f"获取所有数据失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
 @app.route('/', methods=['GET'])
 def index():
     """
@@ -260,17 +637,33 @@ def index():
     """
     return jsonify({
         'service': 'YFinance Stock Analysis API',
-        'version': '2.0.0',
+        'version': '3.0.0',
         'data_source': 'Yahoo Finance',
-        'description': '基于yfinance的股票数据分析服务，提供技术指标分析、K线数据查询等功能',
+        'description': '基于yfinance的股票数据分析服务，提供技术指标分析、基本面分析、综合分析等功能',
         'endpoints': {
             'health': 'GET /api/health - 健康检查',
             'analyze': 'GET /api/analyze/<symbol>?duration=1Y&bar_size=1day - 技术分析（自动包含AI分析）',
             'refresh_analyze': 'POST /api/refresh-analyze/<symbol>?duration=1Y&bar_size=1day - 强制刷新分析',
+            'comprehensive': 'GET /api/comprehensive/<symbol> - 全面股票分析报告',
+            'fundamental': 'GET /api/fundamental/<symbol> - 基本面数据',
+            'dividends': 'GET /api/dividends/<symbol> - 股息历史',
+            'institutional': 'GET /api/institutional/<symbol> - 机构持仓',
+            'insider': 'GET /api/insider/<symbol> - 内部交易',
+            'recommendations': 'GET /api/recommendations/<symbol> - 分析师推荐',
+            'earnings': 'GET /api/earnings/<symbol> - 收益数据',
+            'news': 'GET /api/news/<symbol>?limit=10 - 相关新闻',
+            'options': 'GET /api/options/<symbol> - 期权数据',
+            'all_data': 'GET /api/all-data/<symbol> - 所有原始数据',
             'hot_stocks': 'GET /api/hot-stocks?limit=20 - 热门股票列表',
             'indicator_info': 'GET /api/indicator-info?indicator=rsi - 指标说明'
         },
-        'note': '历史K线、股票信息、基本面数据已整合到analyze接口中，不再提供独立API'
+        'features': [
+            '技术分析：40+技术指标，智能交易信号',
+            '基本面分析：估值、财务健康、盈利能力、成长性',
+            '机构行为：机构持仓、内部交易、分析师意见',
+            '综合评分：多维度评分系统，投资建议',
+            'AI分析：自动检测Ollama，智能分析建议'
+        ]
     })
 
 

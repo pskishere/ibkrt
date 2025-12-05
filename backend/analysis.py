@@ -581,7 +581,7 @@ def check_ollama_available():
         return False
 
 
-def perform_ai_analysis(symbol, indicators, signals, duration, model=DEFAULT_AI_MODEL):
+def perform_ai_analysis(symbol, indicators, signals, duration, model=DEFAULT_AI_MODEL, extra_data=None):
     """
     执行AI分析的辅助函数
     """
@@ -835,6 +835,92 @@ def perform_ai_analysis(symbol, indicators, signals, duration, model=DEFAULT_AI_
         else:
             fundamental_text = None
         
+        # 处理额外数据（股息、机构持仓、分析师推荐等）
+        extra_sections = []
+        if extra_data:
+            # 股息数据
+            if extra_data.get('dividends'):
+                dividends = extra_data['dividends']
+                div_text = f"股息历史 (最近{len(dividends)}次):\n"
+                for div in dividends:
+                    div_text += f"   - {div['date']}: ${div['dividend']:.4f}\n"
+                extra_sections.append(div_text)
+            
+            # 机构持仓
+            if extra_data.get('institutional_holders'):
+                inst = extra_data['institutional_holders']
+                inst_text = f"机构持仓 (前{min(len(inst), 10)}大机构):\n"
+                for i, holder in enumerate(inst[:10], 1):
+                    name = holder.get('Holder', '未知')
+                    shares = holder.get('Shares', 0)
+                    value = holder.get('Value', 0)
+                    pct = holder.get('% Out', 0)
+                    inst_text += f"   {i}. {name}\n"
+                    inst_text += f"      持股: {shares:,}, 市值: ${value:,.0f}, 占比: {pct}\n"
+                extra_sections.append(inst_text)
+            
+            # 内部交易
+            if extra_data.get('insider_transactions'):
+                insider = extra_data['insider_transactions']
+                insider_text = f"内部交易 (最近{min(len(insider), 10)}笔):\n"
+                for i, trans in enumerate(insider[:10], 1):
+                    insider_name = trans.get('Insider', '未知')
+                    trans_type = trans.get('Transaction', '未知')
+                    shares = trans.get('Shares', 0)
+                    value = trans.get('Value', 0)
+                    insider_text += f"   {i}. {insider_name}: {trans_type}\n"
+                    if shares:
+                        insider_text += f"      股数: {shares:,}, 价值: ${value:,.0f}\n"
+                extra_sections.append(insider_text)
+            
+            # 分析师推荐
+            if extra_data.get('analyst_recommendations'):
+                recs = extra_data['analyst_recommendations']
+                rec_text = f"分析师推荐 (最近{min(len(recs), 8)}条):\n"
+                for i, rec in enumerate(recs[:8], 1):
+                    firm = rec.get('Firm', '未知')
+                    to_grade = rec.get('To Grade', '未知')
+                    from_grade = rec.get('From Grade', '')
+                    action = rec.get('Action', '')
+                    if from_grade and action:
+                        rec_text += f"   {i}. {firm}: {from_grade} → {to_grade} ({action})\n"
+                    else:
+                        rec_text += f"   {i}. {firm}: {to_grade}\n"
+                extra_sections.append(rec_text)
+            
+            # 收益数据
+            if extra_data.get('earnings'):
+                earnings_data = extra_data['earnings']
+                quarterly = earnings_data.get('quarterly', [])
+                if quarterly:
+                    earn_text = f"季度收益 (最近{min(len(quarterly), 4)}个季度):\n"
+                    for q in quarterly[:4]:
+                        quarter = q.get('quarter', '未知')
+                        revenue = q.get('Revenue', 0)
+                        earnings_val = q.get('Earnings', 0)
+                        try:
+                            rev_b = float(revenue) / 1e9
+                            earn_b = float(earnings_val) / 1e9
+                            earn_text += f"   {quarter}: 营收 ${rev_b:.2f}B, 盈利 ${earn_b:.2f}B\n"
+                        except:
+                            earn_text += f"   {quarter}: 营收 {revenue}, 盈利 {earnings_val}\n"
+                    extra_sections.append(earn_text)
+            
+            # 新闻标题
+            if extra_data.get('news'):
+                news = extra_data['news']
+                news_text = f"最新新闻 (最近{len(news)}条标题):\n"
+                for i, item in enumerate(news, 1):
+                    title = item.get('title', '未知')
+                    publisher = item.get('publisher', '')
+                    news_text += f"   {i}. {title}"
+                    if publisher:
+                        news_text += f" [{publisher}]"
+                    news_text += "\n"
+                extra_sections.append(news_text)
+        
+        extra_text = "\n\n".join(extra_sections) if extra_sections else None
+        
         # 获取评分系统详细信息
         score_details = signals.get('score_details', {})
         dimensions = score_details.get('dimensions', {}) if score_details else {}
@@ -921,7 +1007,10 @@ def perform_ai_analysis(symbol, indicators, signals, duration, model=DEFAULT_AI_
 - ML预测: {indicators.get('ml_trend', 'unknown')} (置信度: {indicators.get('ml_confidence', 0):.1f}%, 预期: {indicators.get('ml_prediction', 0)*100:.2f}%)
 
 # 基本面数据
-{fundamental_text}
+{fundamental_text if fundamental_text else '无可用数据'}
+
+# 市场数据
+{extra_text if extra_text else '无额外市场数据'}
 
 ---
 
@@ -1006,7 +1095,34 @@ def perform_ai_analysis(symbol, indicators, signals, duration, model=DEFAULT_AI_
    - 分析师评级和目标价
    - 市场情绪和预期
 
-## 四、综合分析结论
+## 四、市场行为分析（如果有数据）
+
+1. **股息分红情况**
+   - 分红历史和稳定性
+   - 股息率评估
+   - 分红增长趋势
+
+2. **机构投资者行为**
+   - 主要机构持仓分析
+   - 机构持仓变化趋势
+   - 机构认可度评估
+
+3. **内部人员交易**
+   - 内部买卖比例
+   - 内部人员信心分析
+   - 潜在风险提示
+
+4. **分析师观点**
+   - 评级变化趋势
+   - 目标价合理性
+   - 市场共识判断
+
+5. **最新动态**
+   - 重要新闻事件
+   - 市场关注焦点
+   - 潜在催化剂
+
+## 五、综合分析结论
 
 1. **买卖建议**
    - 基于多维度评分系统的综合判断
@@ -1133,6 +1249,9 @@ def perform_ai_analysis(symbol, indicators, signals, duration, model=DEFAULT_AI_
    - 连续上涨天数: {indicators.get('consecutive_up_days', 0)}
    - 连续下跌天数: {indicators.get('consecutive_down_days', 0)}
 - ML预测: {indicators.get('ml_trend', 'unknown')} (置信度: {indicators.get('ml_confidence', 0):.1f}%, 预期: {indicators.get('ml_prediction', 0)*100:.2f}%)
+
+# 市场数据
+{extra_text if extra_text else '无额外市场数据'}
 
 ---
 # 分析任务

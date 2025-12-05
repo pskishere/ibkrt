@@ -1678,6 +1678,388 @@ const MainPage: React.FC = () => {
                     />
                     )}
 
+                  {/* 市场数据（股息、机构持仓、分析师推荐等） */}
+                  {analysisResult.extra_data && (
+                    <Collapse
+                      ghost
+                      defaultActiveKey={['dividends', 'institutional', 'analyst']}
+                      items={[
+                        // 股息数据
+                        analysisResult.extra_data.dividends && analysisResult.extra_data.dividends.length > 0 ? {
+                          key: 'dividends',
+                          label: (
+                            <span>
+                              <DollarOutlined style={{ marginRight: 8 }} />
+                              股息历史 ({analysisResult.extra_data.dividends.length}次) 💰
+                            </span>
+                          ),
+                          children: (
+                            <div>
+                              <Table
+                                size="small"
+                                pagination={{ pageSize: 10, showSizeChanger: false }}
+                                dataSource={analysisResult.extra_data.dividends.slice(0, 50)}
+                                columns={[
+                                  { 
+                                    title: '日期', 
+                                    dataIndex: 'date', 
+                                    key: 'date',
+                                    width: '40%',
+                                  },
+                                  { 
+                                    title: '股息', 
+                                    dataIndex: 'dividend', 
+                                    key: 'dividend',
+                                    render: (val: number) => (
+                                      <span style={{ fontWeight: 600, color: '#52c41a' }}>
+                                        ${val.toFixed(4)}
+                                      </span>
+                                    )
+                                  },
+                                ]}
+                              />
+                              {analysisResult.extra_data.dividends.length > 50 && (
+                                <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
+                                  显示最近50次，共{analysisResult.extra_data.dividends.length}次
+                                </div>
+                              )}
+                            </div>
+                          ),
+                        } : null,
+                        
+                        // 机构持仓
+                        analysisResult.extra_data.institutional_holders && analysisResult.extra_data.institutional_holders.length > 0 ? {
+                          key: 'institutional',
+                          label: (
+                            <span>
+                              <BarChartOutlined style={{ marginRight: 8 }} />
+                              机构持仓 (前{analysisResult.extra_data.institutional_holders.length}大) 🏢
+                            </span>
+                          ),
+                          children: (
+                            <Table
+                              size="small"
+                              pagination={false}
+                              dataSource={analysisResult.extra_data.institutional_holders}
+                              columns={[
+                                { 
+                                  title: '机构名称', 
+                                  dataIndex: 'Holder', 
+                                  key: 'holder',
+                                  width: '35%',
+                                  render: (val: string) => (
+                                    <span style={{ fontWeight: 500 }}>{val}</span>
+                                  )
+                                },
+                                { 
+                                  title: '持股数', 
+                                  dataIndex: 'Shares', 
+                                  key: 'shares',
+                                  render: (val: number) => val ? (
+                                    <span style={{ color: '#1890ff' }}>
+                                      {val.toLocaleString()}
+                                    </span>
+                                  ) : '-'
+                                },
+                                { 
+                                  title: '市值', 
+                                  dataIndex: 'Value', 
+                                  key: 'value',
+                                  render: (val: number) => val ? (
+                                    <span style={{ fontWeight: 600 }}>
+                                      ${formatLargeNumber(val)}
+                                    </span>
+                                  ) : '-'
+                                },
+                                { 
+                                  title: '占比', 
+                                  dataIndex: '% Out', 
+                                  key: 'pct',
+                                  render: (val: any) => val ? (
+                                    <Tag color="blue">{val}</Tag>
+                                  ) : '-'
+                                },
+                              ]}
+                              scroll={{ x: 600 }}
+                            />
+                          ),
+                        } : null,
+                        
+                        // 内部交易
+                        analysisResult.extra_data.insider_transactions && analysisResult.extra_data.insider_transactions.length > 0 ? {
+                          key: 'insider',
+                          label: (
+                            <span>
+                              <RiseOutlined style={{ marginRight: 8 }} />
+                              内部交易 (最近{analysisResult.extra_data.insider_transactions.length}笔) 👔
+                            </span>
+                          ),
+                          children: (
+                            <Table
+                              size="small"
+                              pagination={{ pageSize: 15, showSizeChanger: false }}
+                              dataSource={analysisResult.extra_data.insider_transactions}
+                              columns={[
+                                { 
+                                  title: '内部人员', 
+                                  dataIndex: 'Insider', 
+                                  key: 'insider',
+                                  width: '28%',
+                                  render: (val: string) => (
+                                    <span style={{ fontSize: 13 }}>{val}</span>
+                                  )
+                                },
+                                { 
+                                  title: '交易类型', 
+                                  dataIndex: 'Transaction', 
+                                  key: 'transaction',
+                                  width: '30%',
+                                  render: (val: string) => {
+                                    const isBuy = val && (val.toLowerCase().includes('purchase') || val.toLowerCase().includes('buy'));
+                                    const isSell = val && (val.toLowerCase().includes('sale') || val.toLowerCase().includes('sell'));
+                                    return (
+                                      <Tag color={isBuy ? 'green' : isSell ? 'red' : 'default'}>
+                                        {val || '-'}
+                                      </Tag>
+                                    );
+                                  }
+                                },
+                                { 
+                                  title: '股数', 
+                                  dataIndex: 'Shares', 
+                                  key: 'shares',
+                                  render: (val: number) => val ? (
+                                    <span style={{ color: '#1890ff' }}>
+                                      {val.toLocaleString()}
+                                    </span>
+                                  ) : '-'
+                                },
+                                { 
+                                  title: '价值', 
+                                  dataIndex: 'Value', 
+                                  key: 'value',
+                                  render: (val: number) => val ? (
+                                    <span style={{ fontWeight: 600 }}>
+                                      ${formatLargeNumber(val)}
+                                    </span>
+                                  ) : '-'
+                                },
+                              ]}
+                              scroll={{ x: 600 }}
+                            />
+                          ),
+                        } : null,
+                        
+                        // 分析师推荐
+                        analysisResult.extra_data.analyst_recommendations && analysisResult.extra_data.analyst_recommendations.length > 0 ? {
+                          key: 'analyst',
+                          label: (
+                            <span>
+                              <BarChartOutlined style={{ marginRight: 8 }} />
+                              分析师推荐 (最近{analysisResult.extra_data.analyst_recommendations.length}条) 📊
+                            </span>
+                          ),
+                          children: (
+                            <Table
+                              size="small"
+                              pagination={false}
+                              dataSource={analysisResult.extra_data.analyst_recommendations}
+                              columns={[
+                                { 
+                                  title: '机构', 
+                                  dataIndex: 'Firm', 
+                                  key: 'firm',
+                                  width: '28%',
+                                  render: (val: string) => (
+                                    <span style={{ fontWeight: 500, fontSize: 13 }}>{val}</span>
+                                  )
+                                },
+                                { 
+                                  title: '原评级', 
+                                  dataIndex: 'From Grade', 
+                                  key: 'from',
+                                  width: '24%',
+                                  render: (val: string) => val ? (
+                                    <Tag>{val}</Tag>
+                                  ) : <span style={{ color: '#bfbfbf' }}>-</span>
+                                },
+                                { 
+                                  title: '新评级', 
+                                  dataIndex: 'To Grade', 
+                                  key: 'to',
+                                  width: '24%',
+                                  render: (val: string) => {
+                                    const lower = val?.toLowerCase() || '';
+                                    const color = 
+                                      lower.includes('strong buy') || lower.includes('outperform') ? 'green' :
+                                      lower.includes('buy') ? 'cyan' :
+                                      lower.includes('hold') || lower.includes('neutral') ? 'default' :
+                                      lower.includes('sell') || lower.includes('underperform') ? 'red' : 'default';
+                                    return (
+                                      <Tag color={color} style={{ fontWeight: 600 }}>
+                                        {val}
+                                      </Tag>
+                                    );
+                                  }
+                                },
+                                { 
+                                  title: '变化', 
+                                  dataIndex: 'Action', 
+                                  key: 'action',
+                                  render: (val: string) => {
+                                    const lower = val?.toLowerCase() || '';
+                                    if (lower.includes('up') || lower.includes('upgrade')) {
+                                      return <Tag color="success" icon={<RiseOutlined />}>上调</Tag>;
+                                    } else if (lower.includes('down') || lower.includes('downgrade')) {
+                                      return <Tag color="error" icon={<FallOutlined />}>下调</Tag>;
+                                    } else if (lower.includes('init') || lower.includes('main')) {
+                                      return <Tag color="processing">新评级</Tag>;
+                                    }
+                                    return val ? <Tag>{val}</Tag> : '-';
+                                  }
+                                },
+                              ]}
+                              scroll={{ x: 600 }}
+                            />
+                          ),
+                        } : null,
+                        
+                        // 收益数据
+                        analysisResult.extra_data.earnings?.quarterly && analysisResult.extra_data.earnings.quarterly.length > 0 ? {
+                          key: 'earnings',
+                          label: (
+                            <span>
+                              <BarChartOutlined style={{ marginRight: 8 }} />
+                              季度收益 ({analysisResult.extra_data.earnings.quarterly.length}个季度) 📈
+                            </span>
+                          ),
+                          children: (
+                            <Table
+                              size="small"
+                              pagination={false}
+                              dataSource={analysisResult.extra_data.earnings.quarterly}
+                              columns={[
+                                { 
+                                  title: '季度', 
+                                  dataIndex: 'quarter', 
+                                  key: 'quarter',
+                                  width: '35%',
+                                  render: (val: string) => (
+                                    <span style={{ fontWeight: 600 }}>{val}</span>
+                                  )
+                                },
+                                { 
+                                  title: '营收', 
+                                  dataIndex: 'Revenue', 
+                                  key: 'revenue',
+                                  render: (val: number) => val ? (
+                                    <span style={{ color: '#1890ff', fontWeight: 500 }}>
+                                      ${formatLargeNumber(val)}
+                                    </span>
+                                  ) : '-'
+                                },
+                                { 
+                                  title: '盈利', 
+                                  dataIndex: 'Earnings', 
+                                  key: 'earnings',
+                                  render: (val: number) => val ? (
+                                    <span style={{ color: val >= 0 ? '#52c41a' : '#ff4d4f', fontWeight: 600 }}>
+                                      ${formatLargeNumber(val)}
+                                    </span>
+                                  ) : '-'
+                                },
+                              ]}
+                            />
+                          ),
+                        } : null,
+                        
+                        // 新闻
+                        analysisResult.extra_data.news && analysisResult.extra_data.news.length > 0 ? {
+                          key: 'news',
+                          label: (
+                            <span>
+                              <BarChartOutlined style={{ marginRight: 8 }} />
+                              最新新闻 ({analysisResult.extra_data.news.length}条) 📰
+                            </span>
+                          ),
+                          children: (
+                            <div style={{ padding: '8px 0' }}>
+                              {analysisResult.extra_data.news.map((item, index) => (
+                                <div 
+                                  key={index} 
+                                  style={{ 
+                                    marginBottom: 16, 
+                                    paddingBottom: 16, 
+                                    borderBottom: index < analysisResult.extra_data.news!.length - 1 ? '1px solid #f0f0f0' : 'none',
+                                    transition: 'all 0.3s'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor = '#fafafa';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'transparent';
+                                  }}
+                                >
+                                  <div style={{ 
+                                    fontWeight: 600, 
+                                    marginBottom: 6,
+                                    fontSize: 14,
+                                    lineHeight: 1.5
+                                  }}>
+                                    {item.link ? (
+                                      <a 
+                                        href={item.link} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        style={{ 
+                                          color: '#1890ff',
+                                          textDecoration: 'none'
+                                        }}
+                                      >
+                                        <RightOutlined style={{ fontSize: 10, marginRight: 6 }} />
+                                        {item.title}
+                                      </a>
+                                    ) : (
+                                      <span>
+                                        <RightOutlined style={{ fontSize: 10, marginRight: 6 }} />
+                                        {item.title}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div style={{ 
+                                    fontSize: 12, 
+                                    color: '#8c8c8c',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8
+                                  }}>
+                                    {item.publisher && (
+                                      <Tag color="blue" style={{ margin: 0 }}>
+                                        {item.publisher}
+                                      </Tag>
+                                    )}
+                                    {item.providerPublishTime && (
+                                      <span>
+                                        {new Date(item.providerPublishTime).toLocaleString('zh-CN', {
+                                          year: 'numeric',
+                                          month: '2-digit',
+                                          day: '2-digit',
+                                          hour: '2-digit',
+                                          minute: '2-digit'
+                                        })}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ),
+                        } : null,
+                      ].filter((item): item is NonNullable<typeof item> => item !== null)}
+                      style={{ marginTop: 24 }}
+                    />
+                  )}
+
                 </div>
               )
               }

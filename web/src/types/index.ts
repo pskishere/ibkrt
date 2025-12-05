@@ -169,6 +169,7 @@ export interface AnalysisResult {
   ai_available?: boolean;
   model?: string;
   ai_error?: string;
+  extra_data?: ExtraAnalysisData;  // 额外数据（股息、机构持仓等）
   [key: string]: any;
 }
 
@@ -325,4 +326,77 @@ export interface IndicatorInfoResponse {
   indicator?: string;
   info?: IndicatorInfo;
   message?: string;
+}
+
+/**
+ * 股息记录
+ */
+export interface DividendRecord {
+  date: string;
+  dividend: number;
+}
+
+/**
+ * 内部交易记录
+ */
+export interface InsiderTransaction {
+  Insider?: string;
+  Transaction?: string;
+  Shares?: number;
+  Value?: number;
+  Date?: string;
+  [key: string]: any;
+}
+
+/**
+ * 分析师推荐记录
+ */
+export interface AnalystRecommendation {
+  Firm?: string;
+  'To Grade'?: string;
+  'From Grade'?: string;
+  Action?: string;
+  Date?: string;
+  [key: string]: any;
+}
+
+/**
+ * 收益数据
+ */
+export interface EarningsData {
+  yearly?: Array<{
+    year: string;
+    Revenue?: number;
+    Earnings?: number;
+    [key: string]: any;
+  }>;
+  quarterly?: Array<{
+    quarter: string;
+    Revenue?: number;
+    Earnings?: number;
+    [key: string]: any;
+  }>;
+}
+
+/**
+ * 新闻记录
+ */
+export interface NewsItem {
+  title?: string;
+  publisher?: string;
+  link?: string;
+  providerPublishTime?: string;
+  [key: string]: any;
+}
+
+/**
+ * 额外分析数据
+ */
+export interface ExtraAnalysisData {
+  dividends?: DividendRecord[];
+  institutional_holders?: InstitutionalHolderRecord[];
+  insider_transactions?: InsiderTransaction[];
+  analyst_recommendations?: AnalystRecommendation[];
+  earnings?: EarningsData;
+  news?: NewsItem[];
 }
